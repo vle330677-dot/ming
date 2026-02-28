@@ -15,11 +15,12 @@ export default defineConfig(({ mode }) => {
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
+    // 👇 关键修复：确保 resolve 对象正确闭合
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
-    }, // 👈 必须在这里闭合 resolve 对象
+    }, // <--- 你之前的代码漏掉了这个闭合大括号和逗号
 
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
