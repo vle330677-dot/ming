@@ -64,6 +64,31 @@ function hashNum(input: string | number) {
   return Math.abs(h);
 }
 
+// ✅ 对戏 sessionId 兼容提取
+function extractSessionId(data: any): string | null {
+  if (!data) return null;
+
+  const direct =
+    data.sessionId ||
+    data.activeSessionId ||
+    data?.session?.id ||
+    data?.id;
+
+  if (direct) return String(direct);
+
+  if (Array.isArray(data.sessions) && data.sessions.length > 0) {
+    const id = data.sessions[0]?.id;
+    if (id) return String(id);
+  }
+
+  if (Array.isArray(data.data) && data.data.length > 0) {
+    const id = data.data[0]?.id;
+    if (id) return String(id);
+  }
+
+  return null;
+}
+
 export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) {
   const [selectedLocation, setSelectedLocation] = useState<any>(null);
   const [activeView, setActiveView] = useState<string | null>(null);
@@ -155,7 +180,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     return () => clearInterval(timer);
   }, [effectiveLocationId, user.id]);
 
-  // ===== 被动接收对戏会话 =====
+  // ===== 被动接收对戏会话（增强兼容）=====
   useEffect(() => {
     if (activeRPSessionId) return;
 
@@ -163,15 +188,19 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       const endpoints = [
         `/api/rp/session/active/${user.id}`,
         `/api/rp/active/${user.id}`,
-        `/api/rp/session/by-user/${user.id}`
+        `/api/rp/session/by-user/${user.id}`,
+        `/api/rp/sessions/${user.id}`,
+        `/api/rp/session/list/${user.id}`
       ];
+
       for (const ep of endpoints) {
         try {
           const res = await fetch(ep);
           if (!res.ok) continue;
           const data = await res.json();
-          const sid = data?.sessionId || data?.activeSessionId || data?.session?.id;
-          if (data?.success && sid) {
+
+          const sid = extractSessionId(data);
+          if ((data?.success ?? true) && sid) {
             setActiveRPSessionId(String(sid));
             showToast('收到新的对戏连接，已接入频道');
             break;
@@ -191,9 +220,9 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const isUndifferentiated = userAge < 16;
   const isStudentAge = userAge >= 16 && userAge <= 19;
 
-  // ===== 主动发起对戏 =====
-  const startRoleplaySession = async (target: User) => {
-    if (isCreatingRP) return;
+  // ===== 主动发起对戏（返回 boolean）=====
+  const startRoleplaySession = async (target: User): Promise<boolean> => {
+    if (isCreatingRP) return false;
     setIsCreatingRP(true);
 
     const payload = {
@@ -218,9 +247,10 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             body: JSON.stringify(payload)
           });
           if (!res.ok) continue;
+
           const data = await res.json();
-          sid = data?.sessionId || data?.session?.id || data?.id || null;
-          if (data?.success && sid) break;
+          sid = extractSessionId(data);
+          if ((data?.success ?? true) && sid) break;
         } catch {
           // try next
         }
@@ -228,11 +258,12 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
 
       if (!sid) {
         showToast('对戏会话创建失败：后端未返回 sessionId');
-        return;
+        return false;
       }
 
       setActiveRPSessionId(String(sid));
       showToast(`已向 ${target.name} 发起对戏连接`);
+      return true;
     } finally {
       setIsCreatingRP(false);
     }
@@ -726,7 +757,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             onClose={() => setInteractTarget(null)}
             showToast={showToast}
             onStartRP={async (target) => {
-              await startRoleplaySession(target);
+              return await startRoleplaySession(target); // ✅ 返回 boolean
             }}
           />
         )}
