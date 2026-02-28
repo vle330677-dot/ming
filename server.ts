@@ -9,9 +9,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// server.ts
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'data', 'game.db');
-// 确保文件夹存在（手动或在 Dockerfile 中创建）
+const dbPath = process.env.DB_PATH || 'game.db';
 const db = new Database(dbPath);
 
 // ================= 1. 数据库初始化 =================
@@ -50,6 +48,16 @@ db.exec(`
     allowVisit INTEGER DEFAULT 1,
     fury INTEGER DEFAULT 0,
     partyId TEXT DEFAULT NULL
+  );
+  CREATE TABLE IF NOT EXISTS monsters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    avatarUrl TEXT,
+    attackType TEXT DEFAULT 'physical', -- 'physical' (肉体) 或 'mental' (精神)
+    power INTEGER DEFAULT 10,           -- 怪物强度数值
+    hp INTEGER DEFAULT 100,
+    rarity TEXT DEFAULT '普通'           -- '普通', '精英', '领主'
   );
   
   CREATE TABLE IF NOT EXISTS active_rp_sessions (
@@ -1441,6 +1449,82 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
   });
+  // server.ts
+
+// --- 管理员：怪物管理 ---
+app.get('/api/admin/monsters', (req, res) => {
+  res.json({ success: true, monsters: db.prepare('SELECT * FROM monsters').all() });
+});
+
+app.post('/api/admin/monsters', (req, res) => {
+  const { name, description, avatarUrl, attackType, power, hp, rarity } = req.body;
+  db.prepare(`INSERT INTO monsters (name, description, avatarUrl, attackType, power, hp, rarity) VALUES (?, ?, ?, ?, ?, ?, ?)` )
+    .run(name, description, avatarUrl, attackType, power, hp, rarity);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/monsters/:id', (req, res) => {
+  db.prepare('DELETE FROM monsters WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+// --- 游戏逻辑：探索战斗结算 ---
+app.post('/api/explore/combat', (req, res) => {
+  const { userId } = req.body;
+  
+  // 1. 随机抽取一个怪物
+  const monster = db.prepare('SELECT * FROM monsters ORDER BY RANDOM() LIMIT 1').get() as any;
+  if (!monster) return res.json({ success: false, message: '界外区域一片死寂，没有怪物出没。' });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+  
+  // 2. 战斗胜负算法 (示例：根据属性比拼)
+  // 如果怪物攻击肉体，比拼 physicalRank；如果是精神，比拼 mentalRank
+  // 假设 Rank 映射为数值：S:100, A:80, B:60, C:40, D:20
+  const rankMap: Record<string, number> = { 'S':100, 'A':80, 'B':60, 'C':40, 'D':20, '—':0 };
+  const userPower = monster.attackType === 'physical' 
+    ? (rankMap[user.physicalRank] || 10) 
+    : (rankMap[user.mentalRank] || 10);
+  
+  const winChance = (userPower / (userPower + monster.power)) * 100;
+  const isWin = Math.random() * 100 < winChance;
+
+  if (isWin) {
+    // 胜利：提升 5% 精神/肉体进度 (这里假设进度满100会升阶)
+    db.prepare(`
+      UPDATE users 
+      SET mentalProgress = MIN(100, mentalProgress + 5),
+          trainCount = trainCount + 1,
+          gold = gold + ?
+      WHERE id = ?
+    `).run(monster.power * 2, userId);
+
+    res.json({
+      success: true,
+      isWin: true,
+      monster,
+      message: `战斗胜利！你击败了 [${monster.name}]。你的精神与肉体在磨砺中变强了（进度+5%），并搜刮到 ${monster.power * 2}G。`
+    });
+  } else {
+    // 失败：扣除 10% 各项属性，回城
+    // 这里的“回到城中”通过修改 currentLocation 为 'tower_of_life' 实现
+    db.prepare(`
+      UPDATE users 
+      SET hp = hp * 0.9,
+          mp = mp * 0.9,
+          mentalProgress = MAX(0, mentalProgress - 10),
+          currentLocation = 'tower_of_life'
+      WHERE id = ?
+    `).run(userId);
+
+  res.json({
+      success: true,
+      isWin: false,
+      monster,
+      message: `你被 [${monster.name}] 的${monster.attackType === 'physical' ? '重击' : '精神尖刺'}击溃了！你损失了10%的生命与精神强度，并被救生舱强制传送回了命之塔。`
+    });
+  }
+});
 }
 
 startServer();

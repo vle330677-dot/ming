@@ -96,34 +96,59 @@ export function ArmyView({ user, onExit, showToast, fetchGlobalData }: Props) {
   };
 
  // 在 handleJoin 函数中替换原有逻辑
-const handleJoin = async (jobName: string) => {
+const handleJoinOrPromote = async (targetJobName: string) => {
+  let jobName = targetJobName;
   const age = user.age || 0;
 
-  // 1. 未分化者彻底拦截
-  if (age < 16) {
-    return showToast("未分化者禁止加入该阵营，请先前往圣所或伦敦塔。");
-  }
+  try {
+    // 1. 未分化者彻底拦截
+    if (age < 16) {
+      return showToast("未分化者禁止加入该阵营，请先前往圣所或伦敦塔。");
+    }
 
-  // 2. 16-19岁“未毕业”拦截与降级逻辑
-  if (age >= 16 && age <= 19) {
-    const confirmMessage = "你还没有毕业，真的要加入其他阵营吗？选择【否】将引导你前往伦敦塔成为学生，选择【是】你将只能担任该阵营的最低等级职业。";
-    
-    if (!window.confirm(confirmMessage)) {
-      // 选择“否”：引导去伦敦塔
-      showToast("正在为你导航至伦敦塔...");
-      onExit(); // 退出当前阵营界面
-      // 这里可以触发一个 state 让 GameView 打开伦敦塔，或者让玩家手动前往
-      return;
-    } else {
-      // 选择“是”：强制降级为最低职业
-      // 假设当前阵营最低职业是 '军队士兵'
-      const lowestJob = "军队士兵"; 
-      if (jobName !== lowestJob) {
-        showToast(`受限于年龄，你被分配到了基层职位：${lowestJob}`);
-        jobName = lowestJob; 
+    // 2. 16-19岁“未毕业”拦截与降级逻辑
+    if (age >= 16 && age <= 19) {
+      const confirmMessage =
+        "你还没有毕业，真的要加入其他阵营吗？选择【否】将引导你前往伦敦塔成为学生，选择【是】你将只能担任该阵营的最低等级职业。";
+
+      if (!window.confirm(confirmMessage)) {
+        showToast("正在为你导航至伦敦塔...");
+        onExit(); // 退出当前阵营界面
+        return;
+      } else {
+        const lowestJob = "军队士兵";
+        if (jobName !== lowestJob) {
+          showToast(`受限于年龄，你被分配到了基层职位：${lowestJob}`);
+          jobName = lowestJob;
+        }
       }
     }
+
+    // 3. 资质校验
+    if (!checkQualifications(jobName)) {
+      return showToast(`资质不符！加入 ${jobName} 需要满足相应的精神/肉体等级要求。`);
+    }
+
+    // 4. 发送请求
+    const res = await fetch('/api/tower/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id, jobName })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      showToast(`欢迎加入，${jobName}。以阵营之名，履行你的职责。`);
+      fetchGlobalData();
+    } else {
+      showToast(data.message || '加入/晋升失败');
+    }
+  } catch (e) {
+    console.error(e);
+    showToast('加入/晋升请求失败，请稍后重试');
   }
+};
+
 
   // 3. 19岁以上或已确认降级的 16-19岁玩家
   if (!checkQualifications(jobName)) {

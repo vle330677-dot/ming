@@ -94,6 +94,10 @@ export function AdminView() {
   const [loading, setLoading] = useState(false);
   const [archives, setArchives] = useState<RPArchive[]>([]);
   const [archiveSearch, setArchiveSearch] = useState('');
+  const [monsters, setMonsters] = useState<any[]>([]);
+  const [newMonster, setNewMonster] = useState({
+  name: '', description: '', attackType: 'physical', power: 20, hp: 100, rarity: '普通'
+});
 
   // 编辑用户状态
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -767,6 +771,33 @@ export function AdminView() {
                   </div>
                 )}
               </div>
+              {activeTab === 'monsters' && (
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div className="bg-white p-6 rounded-3xl border shadow-sm h-fit">
+      <h3 className="font-black mb-4">投放新魔物</h3>
+      <div className="space-y-3">
+        <Input label="魔物名称" value={newMonster.name} onChange={v => setNewMonster({...newMonster, name:v})} />
+        <select className="w-full p-3 bg-slate-50 rounded-xl border" value={newMonster.attackType} onChange={e => setNewMonster({...newMonster, attackType: e.target.value})}>
+          <option value="physical">肉体攻击 (Physical)</option>
+          <option value="mental">精神冲击 (Mental)</option>
+        </select>
+        <Input label="强度等级(数值)" type="number" value={String(newMonster.power)} onChange={v => setNewMonster({...newMonster, power: parseInt(v)})} />
+        <button onClick={handleAddMonster} className="w-full py-3 bg-rose-600 text-white rounded-xl font-bold">注入界外区域</button>
+      </div>
+    </div>
+    <div className="lg:col-span-2 grid grid-cols-2 gap-4">
+      {monsters.map(m => (
+        <div key={m.id} className="p-4 bg-white border rounded-2xl flex justify-between">
+          <div>
+            <div className="font-bold">{m.name} <span className="text-[10px] text-rose-500">ATK:{m.power}</span></div>
+            <div className="text-xs text-slate-400">{m.attackType === 'physical' ? '肉体伤害' : '精神伤害'}</div>
+          </div>
+          <button onClick={() => deleteMonster(m.id)}><Trash2 size={16} className="text-slate-300 hover:text-rose-500"/></button>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
 
               <div className="mt-8 flex gap-4">
                 <button onClick={() => setEditingUser(null)} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black hover:bg-slate-200 transition-colors">

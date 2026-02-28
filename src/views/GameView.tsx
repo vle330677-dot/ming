@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart } from 'lucide-react';
+import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart, ArrowLeft, Navigation } from 'lucide-react';
 import { User } from '../types';
 
 // ================== 组件导入 ==================
 import { PlayerInteractionUI } from './PlayerInteractionUI';
 import { CharacterHUD } from './CharacterHUD';
-import { RoleplayWindow } from './RoleplayWindow'; // 确保导入对戏窗口
+import { RoleplayWindow } from './RoleplayWindow';
 
 import { TowerOfLifeView } from './TowerOfLifeView';
 import { LondonTowerView } from './LondonTowerView';
@@ -19,18 +19,33 @@ import { DemonSocietyView } from './DemonSocietyView';
 import { SpiritBureauView } from './SpiritBureauView';
 import { ObserverView } from './ObserverView';
 
+// ================== 资源映射配置 ==================
+// 将地点ID映射到 public 文件夹下的图片
+const LOCATION_BG_MAP: Record<string, string> = {
+  'tower_of_life': '/命之塔.jpg',
+  'london_tower': '/伦敦塔.jpg',
+  'sanctuary': '/圣所.jpg',
+  'guild': '/公会.jpg',
+  'army': '/军队.jpg',
+  'rich_area': '/东市.jpg',
+  'slums': '/西市.jpg',
+  'demon_society': '/恶魔会.jpg',
+  'paranormal_office': '/灵异管理所.jpg',
+  'observers': '/观察者.jpg',
+};
+
 // ================== 地图坐标配置 ==================
 const LOCATIONS = [
-  { id: 'tower_of_life', name: '命之塔', x: 50, y: 48, type: 'safe', description: '世界的绝对中心，神明降下神谕的圣地。新生儿在此接受命运的评定。' },
+  { id: 'tower_of_life', name: '命之塔', x: 50, y: 48, type: 'safe', description: '世界的绝对中心，神明降下神谕的圣地。' },
   { id: 'sanctuary', name: '圣所', x: 42, y: 42, type: 'safe', description: '未分化幼崽的摇篮，充满治愈与宁静的气息。' },
-  { id: 'london_tower', name: '伦敦塔', x: 67, y: 35, type: 'safe', description: '哨兵与向导的最高学府与管理机构。未成年分化者的庇护所。' },
+  { id: 'london_tower', name: '伦敦塔', x: 67, y: 35, type: 'safe', description: '哨兵与向导的最高学府与管理机构。' },
   { id: 'rich_area', name: '富人区', x: 70, y: 50, type: 'danger', description: '流光溢彩的销金窟，权贵们在此挥霍财富。' },
-  { id: 'slums', name: '贫民区', x: 25, y: 48, type: 'danger', description: '混乱、肮脏，但充满生机。这里的市长掌控着地下工厂。' },
-  { id: 'demon_society', name: '恶魔会', x: 12, y: 20, type: 'danger', description: '混乱之王的狂欢所，充斥着赌局与危险的交易。(位于未知区域深处)' },
+  { id: 'slums', name: '贫民区', x: 25, y: 48, type: 'danger', description: '混乱、肮脏，但充满生机。' },
+  { id: 'demon_society', name: '恶魔会', x: 12, y: 20, type: 'danger', description: '混乱之王的狂欢所。(未知区域)' },
   { id: 'guild', name: '工会', x: 48, y: 78, type: 'danger', description: '鱼龙混杂的地下交易网与冒险者聚集地。' },
-  { id: 'army', name: '军队', x: 50, y: 18, type: 'danger', description: '人类最坚实的物理防线，对抗域外魔物的铁血堡垒。' },
-  { id: 'observers', name: '观察者', x: 65, y: 15, type: 'danger', description: '记录世界历史与真相的隐秘结社，掌控着巨大的图书馆。' },
-  { id: 'paranormal_office', name: '灵异管理所', x: 88, y: 15, type: 'danger', description: '专门处理非自然精神波动的神秘机关，拥有特殊监狱。(位于未知区域)' },
+  { id: 'army', name: '军队', x: 50, y: 18, type: 'danger', description: '人类最坚实的物理防线。' },
+  { id: 'observers', name: '观察者', x: 65, y: 15, type: 'danger', description: '记录世界历史与真相的隐秘结社。' },
+  { id: 'paranormal_office', name: '灵异管理所', x: 88, y: 15, type: 'danger', description: '专门处理非自然精神波动的神秘机关。' },
 ];
 
 const SAFE_ZONES = ['tower_of_life', 'sanctuary', 'london_tower'];
@@ -63,6 +78,14 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [expandedTombstone, setExpandedTombstone] = useState<number | null>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
+
+  // 计算当前背景图
+  const currentBackgroundImage = useMemo(() => {
+    if (activeView && LOCATION_BG_MAP[activeView]) {
+      return LOCATION_BG_MAP[activeView];
+    }
+    return '/map_background.jpg'; // 默认大地图背景
+  }, [activeView]);
 
   // 监听 HP 变化触发濒死
   useEffect(() => {
@@ -119,106 +142,108 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const isUndifferentiated = userAge < 16;
   const isStudentAge = userAge >= 16 && userAge <= 19;
 
-  // 地点交互逻辑：进入与驻足
+  // 探索交互逻辑
+  const handleExploreAction = async () => {
+    if (Math.random() > 0.5) {
+      try {
+        const res = await fetch('/api/explore/combat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id })
+        });
+        const data = await res.json();
+        if (data.isWin) {
+          showToast(`⚔️ 战斗大捷：${data.message}`);
+        } else {
+          alert(`❌ 探索失败：${data.message}`);
+          setActiveView(null); 
+          fetchGlobalData();
+        }
+      } catch (e) { showToast("战斗系统连接中断"); }
+    } else {
+      handleExploreItem();
+    }
+  };
+
   const handleLocationAction = async (action: 'enter' | 'stay') => {
     if (!selectedLocation) return;
-
     if (isUndifferentiated && !SAFE_ZONES.includes(selectedLocation.id)) {
       if (action === 'enter') {
-        showToast("【驱逐】这里太危险了，守卫拒绝了你的进入：“未分化的小鬼，回塔里去！”");
+        showToast("【驱逐】这里太危险了，守卫拒绝了你的进入！");
         return;
       }
-      const headStrong = window.confirm("这里雾蒙蒙的，仿佛有迷雾笼罩，真的要去吗？（未分化者极易遇险）");
-      if (!headStrong) return;
+      if (!window.confirm("这里极度危险，真的要驻足吗？")) return;
     }
-
     if (isStudentAge && action === 'enter' && !SAFE_ZONES.includes(selectedLocation.id)) {
-      const choice = window.confirm("你还没有毕业，真的要加入其他阵营吗？\n【取消】去伦敦塔深造 (推荐)\n【确定】强行加入 (仅能获得最低职位)");
-      if (!choice) {
+      if (!window.confirm("你还没有毕业，强行加入仅能获得最低职位。确定吗？")) {
         setActiveView('london_tower');
         return;
       }
-      showToast("塔认可了你的选择，但你目前的资历仅支持申请该阵营的最低级职位。");
     }
-
     if (action === 'stay') {
       await fetch(`/api/users/${user.id}/location`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ locationId: selectedLocation.id })
       });
       showToast(`已在 ${selectedLocation.name} 驻足。`);
       fetchGlobalData();
       return;
     }
-
     if (action === 'enter') {
       setActiveView(selectedLocation.id);
+      setSelectedLocation(null); // 关闭弹窗
     }
   };
 
-  // 探索领悟技能
   const handleExploreSkill = async () => {
     if (!selectedLocation) return;
     try {
       const res = await fetch('/api/explore/skill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.id, locationId: selectedLocation.id })
       });
       const data = await res.json();
       showToast(data.success ? `🎉 ${data.message}` : `⚠️ ${data.message}`);
-    } catch (e) {
-      showToast("探索技能时发生了未知错误！");
-    }
+    } catch (e) { showToast("错误！"); }
   };
 
-  // 探索搜刮物资
   const handleExploreItem = async () => {
-    if (!selectedLocation) return;
+    if (!selectedLocation && !activeView) return;
+    // 如果在activeView中探索，使用当前view id，如果在地图弹窗，使用selectedLocation
+    const locId = activeView || selectedLocation?.id;
     try {
       const res = await fetch('/api/explore/item', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, locationId: selectedLocation.id })
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, locationId: locId })
       });
       const data = await res.json();
       showToast(data.success ? `🎉 ${data.message}` : `⚠️ ${data.message}`);
-    } catch (e) {
-      showToast("搜索物资时发生了错误！");
-    }
+    } catch (e) { showToast("错误！"); }
   };
 
-  // 濒死挣扎
   const handleStruggle = async () => {
     try {
       const res = await fetch('/api/rescue/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patientId: user.id, healerId: 0 }) // 0代表发给全区的系统广播
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patientId: user.id, healerId: 0 })
       });
-      const data = await res.json();
-      if (data.success) {
+      if ((await res.json()).success) {
         setRescueReqId(Date.now()); 
-        showToast('求救信号已发出，正在等待区域内向导的响应...');
+        showToast('求救信号已发出...');
       }
     } catch (e) { showToast('求救发送失败'); }
   };
 
-  // 提交死亡/化鬼谢幕
   const handleSubmitDeath = async () => {
     if (!deathText.trim()) return showToast('必须填写谢幕词');
     await fetch(`/api/users/${user.id}/submit-death`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: showDeathForm === 'death' ? 'pending_death' : 'pending_ghost', text: deathText })
     });
-    showToast('申请已提交，等待塔区高层审核...');
+    showToast('申请已提交...');
     setShowDeathForm(null);
     fetchGlobalData();
   };
 
-  // 公墓系列操作
   const fetchGraveyard = async () => {
     const res = await fetch('/api/graveyard');
     const data = await res.json();
@@ -259,92 +284,166 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     loadComments(tombstoneId);
   };
 
-
-  // 子视图全屏接管
-  if (activeView) {
+  // 渲染具体地点的子视图
+  const renderActiveView = () => {
+    if (!activeView) return null;
     const commonProps = { user, onExit: () => setActiveView(null), showToast, fetchGlobalData };
-    switch (activeView) {
-      case 'tower_of_life': return <TowerOfLifeView {...commonProps} />;
-      case 'london_tower': return <LondonTowerView {...commonProps} />;
-      case 'sanctuary': return <SanctuaryView {...commonProps} />;
-      case 'guild': return <GuildView {...commonProps} />;
-      case 'army': return <ArmyView {...commonProps} />;
-      case 'slums': return <SlumsView {...commonProps} />;
-      case 'rich_area': return <RichAreaView {...commonProps} />;
-      case 'demon_society': return <DemonSocietyView {...commonProps} />;
-      case 'paranormal_office': return <SpiritBureauView {...commonProps} />;
-      case 'observers': return <ObserverView {...commonProps} />;
-      default: setActiveView(null); break;
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-slate-950 overflow-hidden font-sans select-none text-slate-100 flex items-center justify-center">
-      
-      {/* 1. 悬浮角色面板 (HUD) */}
-      <CharacterHUD user={user} onLogout={onLogout} />
-
-      {/* 2. 响应式地图容器 */}
-      <div className="relative w-full h-full flex items-center justify-center p-0 md:p-4">
-        <div className="relative aspect-video w-full max-w-[177.78vh] max-h-full shadow-2xl overflow-hidden rounded-xl bg-slate-900 border border-slate-800">
-          
-          <img 
-            src="/map_background.jpg" 
-            className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-80" 
-            alt="World Map" 
-          />
-
-          {/* 地点标记层 */}
-          <div className="absolute inset-0 z-10">
-            {LOCATIONS.map(loc => (
-              <div 
-                key={loc.id}
-                className="absolute transform -translate-x-1/2 -translate-y-1/2 group cursor-pointer"
-                style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
-                onClick={() => setSelectedLocation(loc)}
-              >
-                {user.currentLocation === loc.id && (
-                  <div className="absolute -inset-6 bg-sky-500/20 rounded-full animate-ping pointer-events-none"></div>
-                )}
-                
-                <div className={`relative w-4 h-4 md:w-6 md:h-6 rounded-full border-2 shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all duration-300 flex items-center justify-center
-                  ${user.currentLocation === loc.id 
-                    ? 'bg-sky-500 border-white scale-110 shadow-sky-500/50' 
-                    : 'bg-slate-800 border-slate-400/60 hover:bg-white hover:scale-110'
-                  }`}
-                >
-                  {user.currentLocation === loc.id && <MapPin size={10} className="text-white" />}
-                </div>
-
-                <div className={`absolute top-6 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] md:text-xs font-bold text-white transition-opacity duration-200
-                  ${selectedLocation?.id === loc.id ? 'opacity-100 z-20' : 'opacity-0 group-hover:opacity-100'}
-                `}>
-                  {loc.name}
-                </div>
-              </div>
-            ))}
-          </div>
+    
+    // 使用一个通用的容器来包裹子视图，确保背景图可见
+    const Container = ({ children }: { children: React.ReactNode }) => (
+      <div className="w-full h-full min-h-screen overflow-y-auto pt-20 pb-10 px-4 md:px-0 flex justify-center">
+        <div className="w-full max-w-6xl relative z-10">
+          <button 
+            onClick={() => setActiveView(null)}
+            className="mb-4 flex items-center gap-2 px-4 py-2 bg-slate-900/60 backdrop-blur text-white rounded-xl hover:bg-slate-800 transition-colors border border-slate-700/50"
+          >
+            <ArrowLeft size={18}/> 返回世界地图
+          </button>
+          {children}
         </div>
       </div>
+    );
 
-      {/* 3. 附近玩家列表 (右上角浮动) */}
-      <div className="absolute top-4 right-4 z-40 flex flex-col items-end pointer-events-none">
+    switch (activeView) {
+      case 'tower_of_life': return <Container><TowerOfLifeView {...commonProps} /></Container>;
+      case 'london_tower': return <Container><LondonTowerView {...commonProps} /></Container>;
+      case 'sanctuary': return <Container><SanctuaryView {...commonProps} /></Container>;
+      case 'guild': return <Container><GuildView {...commonProps} /></Container>;
+      case 'army': return <Container><ArmyView {...commonProps} /></Container>;
+      case 'slums': return <Container><SlumsView {...commonProps} /></Container>;
+      case 'rich_area': return <Container><RichAreaView {...commonProps} /></Container>;
+      case 'demon_society': return <Container><DemonSocietyView {...commonProps} /></Container>;
+      case 'paranormal_office': return <Container><SpiritBureauView {...commonProps} /></Container>;
+      case 'observers': return <Container><ObserverView {...commonProps} /></Container>;
+      default: return null;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 overflow-hidden font-sans select-none text-slate-100">
+      
+      {/* 1. 全局背景层：负责大地图与小地图的平滑切换 */}
+      <div className="absolute inset-0 z-0 bg-slate-950">
+         {/* 动态背景图片层 */}
+         <motion.div
+            key={currentBackgroundImage}
+            initial={{ opacity: 0, scale: 1.05 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.8 }}
+            className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+            style={{ 
+              backgroundImage: `url(${currentBackgroundImage})`,
+              filter: activeView ? 'brightness(0.8) blur(0px)' : 'brightness(0.6) blur(2px)'
+            }}
+         />
+         {/* 遮罩层，保证文字可读性 */}
+         <div className={`absolute inset-0 transition-colors duration-700 ${activeView ? 'bg-slate-950/30' : 'bg-slate-950/50'}`} />
+      </div>
+
+      {/* 2. HUD 始终位于最上层 */}
+      <div className="relative z-50">
+         <CharacterHUD user={user} onLogout={onLogout} />
+      </div>
+
+      {/* 3. 主内容区域切换 */}
+      <AnimatePresence mode="wait">
+        
+        {/* === 模式A: 交互式世界大地图 (Big Map) === */}
+        {!activeView && (
+          <motion.div 
+            key="big-map"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            transition={{ duration: 0.5 }}
+            className="relative w-full h-full flex items-center justify-center p-0 md:p-8 z-10"
+          >
+            <div className="relative aspect-video w-full max-w-[170vh] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden rounded-xl md:rounded-[2rem] border border-slate-700/50 bg-slate-900 group">
+              
+              <img 
+                src="/map_background.jpg" 
+                className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-90 group-hover:scale-105 transition-transform duration-[10s] ease-linear" 
+                alt="World Map" 
+              />
+              
+              {/* 网格装饰线 */}
+              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none"></div>
+              
+              {/* 地点标记层 */}
+              <div className="absolute inset-0 z-10">
+                {LOCATIONS.map(loc => (
+                  <div 
+                    key={loc.id}
+                    className="absolute transform -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
+                    style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
+                    onClick={() => setSelectedLocation(loc)}
+                  >
+                    {user.currentLocation === loc.id && (
+                      <div className="absolute -inset-8 bg-sky-500/30 rounded-full animate-ping pointer-events-none"></div>
+                    )}
+                    
+                    {/* 标记点图标 */}
+                    <div className={`relative w-4 h-4 md:w-8 md:h-8 rounded-full border-2 shadow-[0_0_20px_rgba(0,0,0,0.8)] transition-all duration-300 flex items-center justify-center backdrop-blur-sm
+                      ${user.currentLocation === loc.id 
+                        ? 'bg-sky-500 border-white scale-110 shadow-sky-500/80' 
+                        : 'bg-slate-900/80 border-slate-400 hover:bg-white hover:scale-125 hover:border-white'
+                      }`}
+                    >
+                      {user.currentLocation === loc.id ? <Navigation size={14} className="text-white fill-white"/> : <div className="w-1.5 h-1.5 rounded-full bg-white/50"/>}
+                    </div>
+
+                    {/* 地名标签 */}
+                    <div className={`absolute top-8 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/50 rounded-lg text-[10px] md:text-xs font-bold text-slate-200 transition-all duration-300 shadow-xl
+                      ${selectedLocation?.id === loc.id ? 'opacity-100 scale-110 z-20 border-sky-500/50 text-white' : 'opacity-0 group-hover/pin:opacity-100 translate-y-2 group-hover/pin:translate-y-0'}
+                    `}>
+                      {loc.name}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 大地图装饰标题 */}
+              <div className="absolute top-6 left-8 pointer-events-none">
+                <h1 className="text-4xl font-black text-white/10 tracking-[0.2em] uppercase">World Map</h1>
+                <div className="text-xs font-mono text-white/20 mt-1">SENTINEL & GUIDE SYSTEM v3.0</div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* === 模式B: 具体地点视图 (Small Map UI) === */}
+        {activeView && (
+          <motion.div
+            key="location-view"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.4 }}
+            className="absolute inset-0 z-20"
+          >
+            {renderActiveView()}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 4. 附近玩家列表 (右上角浮动) */}
+      <div className="absolute top-24 right-4 z-40 flex flex-col items-end pointer-events-none">
         {localPlayers.length > 0 && (
-          <div className="bg-slate-900/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 mb-2 border border-slate-700/50">
-            同区域玩家 ({localPlayers.length})
+          <div className="bg-slate-900/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 mb-2 border border-slate-700/50 shadow-lg">
+            附近感知 ({localPlayers.length})
           </div>
         )}
-        <div className="space-y-2 pointer-events-auto max-h-[40vh] overflow-y-auto custom-scrollbar pr-1">
+        <div className="space-y-2 pointer-events-auto max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
           {localPlayers.map(p => (
             <motion.div 
               key={p.id}
               initial={{ x: 20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               onClick={() => setInteractTarget(p)} 
-              className="bg-slate-900/80 backdrop-blur border border-slate-700/50 p-1.5 pl-3 rounded-full flex items-center gap-3 cursor-pointer hover:border-sky-500 hover:bg-slate-800 transition-all group shadow-lg"
+              className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 p-1.5 pl-3 rounded-full flex items-center gap-3 cursor-pointer hover:border-sky-500 hover:bg-slate-800 transition-all group shadow-xl"
             >
               <span className="text-[10px] font-bold text-slate-300 max-w-[80px] truncate group-hover:text-white">{p.name}</span>
-              <div className="w-8 h-8 rounded-full bg-slate-800 overflow-hidden border border-slate-600 group-hover:border-sky-400">
+              <div className="w-8 h-8 rounded-full bg-slate-800 overflow-hidden border border-slate-600 group-hover:border-sky-400 shadow-inner">
                 {p.avatarUrl ? <img src={p.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs text-white">{p.name[0]}</div>}
               </div>
             </motion.div>
@@ -352,55 +451,69 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </div>
       </div>
 
-      {/* 4. 地点详情弹窗 (底部带探索功能) */}
+      {/* 5. 地点详情弹窗 (大地图模式下显示) */}
       <AnimatePresence>
-        {selectedLocation && (
+        {selectedLocation && !activeView && (
           <motion.div 
-            initial={{ y: 100, opacity: 0 }} 
-            animate={{ y: 0, opacity: 1 }} 
-            exit={{ y: 100, opacity: 0 }} 
-            className="absolute bottom-6 left-4 right-4 md:left-1/2 md:-translate-x-1/2 md:w-[480px] md:bottom-10 bg-slate-900/95 backdrop-blur-xl border border-slate-700 p-6 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-30"
+            initial={{ y: 50, opacity: 0, scale: 0.95 }} 
+            animate={{ y: 0, opacity: 1, scale: 1 }} 
+            exit={{ y: 50, opacity: 0, scale: 0.95 }} 
+            className="fixed bottom-6 left-4 right-4 md:left-1/2 md:-translate-x-1/2 md:w-[480px] md:bottom-12 bg-slate-900/90 backdrop-blur-xl border border-slate-600/50 p-6 rounded-[2rem] shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-50"
           >
+            {/* 弹窗背景图模糊映射 */}
+            <div className="absolute inset-0 rounded-[2rem] overflow-hidden -z-10 opacity-30">
+               <img src={LOCATION_BG_MAP[selectedLocation.id] || '/map_background.jpg'} className="w-full h-full object-cover blur-md scale-110"/>
+            </div>
+
             <div className="flex justify-between items-start">
               <div className="flex-1">
-                <h3 className="text-xl font-black text-white mb-2 flex items-center gap-2">
+                <h3 className="text-2xl font-black text-white mb-2 flex items-center gap-2">
                   {selectedLocation.name}
-                  <span className={`text-[10px] px-2 py-0.5 rounded border ${selectedLocation.type === 'safe' ? 'text-emerald-400 border-emerald-900 bg-emerald-900/20' : 'text-rose-400 border-rose-900 bg-rose-900/20'}`}>
+                  <span className={`text-[10px] px-2 py-1 rounded-lg border backdrop-blur-sm ${selectedLocation.type === 'safe' ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10' : 'text-rose-300 border-rose-500/30 bg-rose-500/10'}`}>
                     {selectedLocation.type === 'safe' ? '安全区' : '危险区'}
                   </span>
                 </h3>
-                <p className="text-xs text-slate-400 leading-relaxed mb-6">
+                <p className="text-sm text-slate-300 leading-relaxed mb-6 font-medium">
                   {isUndifferentiated && !SAFE_ZONES.includes(selectedLocation.id) 
                     ? "⚠️ 警告：前方迷雾笼罩，该区域对于【未分化者】极度危险，建议立即撤离。" 
                     : selectedLocation.description}
                 </p>
+                
                 <div className="flex gap-3">
                   <button 
                     onClick={() => handleLocationAction('enter')} 
-                    className="flex-1 px-6 py-3 bg-white text-slate-950 font-black rounded-xl text-xs hover:bg-slate-200 transition-colors shadow-lg shadow-white/10"
+                    className="flex-1 px-6 py-3.5 bg-white text-slate-950 font-black rounded-xl text-sm hover:bg-slate-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.2)]"
                   >
                     进入区域
                   </button>
                   <button 
                     onClick={() => handleLocationAction('stay')} 
-                    className="flex-1 px-6 py-3 bg-slate-800 text-white font-black rounded-xl text-xs hover:bg-slate-700 transition-colors border border-slate-700"
+                    className="flex-1 px-6 py-3.5 bg-slate-800/80 text-white font-black rounded-xl text-sm hover:bg-slate-700 transition-colors border border-slate-600"
                   >
                     在此驻足
                   </button>
                 </div>
+                
                 {/* 搜刮掉落按钮 */}
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <button onClick={handleExploreSkill} className="w-full px-4 py-3 bg-indigo-600/20 text-indigo-400 border border-indigo-500/50 font-black rounded-xl text-[10px] hover:bg-indigo-600 hover:text-white transition-colors">
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <button onClick={handleExploreSkill} className="w-full px-4 py-3 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold rounded-xl text-xs hover:bg-indigo-500 hover:text-white transition-all">
                     🧠 领悟派系技能
                   </button>
-                  <button onClick={handleExploreItem} className="w-full px-4 py-3 bg-amber-600/20 text-amber-400 border border-amber-500/50 font-black rounded-xl text-[10px] hover:bg-amber-600 hover:text-white transition-colors">
+                  <button onClick={handleExploreItem} className="w-full px-4 py-3 bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold rounded-xl text-xs hover:bg-amber-500 hover:text-white transition-all">
                     📦 搜索区域物资
                   </button>
                 </div>
+                
+                {/* 新增：战斗探索按钮 (仅危险区显示) */}
+                {selectedLocation.type === 'danger' && (
+                  <button onClick={handleExploreAction} className="w-full mt-2 px-4 py-3 bg-rose-600/20 text-rose-300 border border-rose-500/30 font-black rounded-xl text-xs hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center gap-2">
+                    <Skull size={14}/> 探索遭遇战 (风险)
+                  </button>
+                )}
               </div>
               <button 
                 onClick={() => setSelectedLocation(null)}
-                className="p-2 -mr-2 -mt-2 text-slate-500 hover:text-white bg-transparent hover:bg-slate-800 rounded-full transition-colors"
+                className="p-2 -mr-2 -mt-2 text-slate-400 hover:text-white bg-slate-800/50 hover:bg-slate-700 rounded-full transition-colors backdrop-blur-sm"
               >
                 <X size={20}/>
               </button>
@@ -409,7 +522,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* 5. 玩家互动弹窗 */}
+      {/* 6. 交互与系统弹窗 (保持原样) */}
       <AnimatePresence>
         {interactTarget && (
           <PlayerInteractionUI 
@@ -417,26 +530,22 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             targetUser={interactTarget}
             onClose={() => setInteractTarget(null)}
             showToast={showToast}
-            onStartRP={(target) => {
-              showToast(`正在与 ${target.name} 建立精神连接...`);
-            }}
+            onStartRP={(target) => { showToast(`正在与 ${target.name} 建立精神连接...`); }}
           />
         )}
       </AnimatePresence>
 
-      {/* --- 新增：强制挂起锁屏 --- */}
       {(user.status === 'pending_death' || user.status === 'pending_ghost') && (
         <div className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md">
           <Skull size={64} className="text-slate-600 mb-6 animate-pulse" />
           <h1 className="text-3xl font-black text-white mb-4 tracking-widest">命运审视中</h1>
           <p className="text-slate-400 font-bold max-w-md leading-relaxed">
             您的谢幕戏正在递交至「塔」的最高议会。<br/>
-            在获得批准前，您的灵魂被锁定于此，无法进行任何交互。
+            在获得批准前，您的灵魂被锁定于此。
           </p>
         </div>
       )}
 
-      {/* --- 新增：濒死弹窗 --- */}
       <AnimatePresence>
         {isDying && user.status === 'approved' && (
           <div className="fixed inset-0 z-[9999] bg-red-950/90 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -447,7 +556,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             >
               <Heart size={48} className="text-red-600 mx-auto mb-4 animate-pulse" />
               <h2 className="text-2xl font-black text-red-500 mb-2">生命体征已消失</h2>
-              <p className="text-slate-400 text-sm mb-8">黑暗正在吞噬你的意识，你将在此长眠，还是做最后的挣扎？</p>
+              <p className="text-slate-400 text-sm mb-8">黑暗正在吞噬你的意识...</p>
               
               <div className="space-y-3">
                 <button 
@@ -469,24 +578,23 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* --- 右下角齿轮菜单 --- */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
-        <button onClick={fetchGraveyard} className="p-3.5 bg-slate-900/80 backdrop-blur border border-slate-700 text-slate-300 rounded-full hover:text-white hover:bg-slate-800 hover:border-slate-500 transition-all shadow-lg group relative">
+        <button onClick={fetchGraveyard} className="p-3.5 bg-slate-900/80 backdrop-blur-md border border-slate-600 text-slate-300 rounded-full hover:text-white hover:bg-sky-600 hover:border-sky-400 hover:scale-110 transition-all shadow-lg group relative">
           <Cross size={20} />
           <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-black text-white text-[10px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">世界公墓</span>
         </button>
-        <button onClick={() => setShowSettings(!showSettings)} className="p-3.5 bg-slate-900/80 backdrop-blur border border-slate-700 text-slate-300 rounded-full hover:text-white hover:bg-slate-800 hover:border-slate-500 transition-all shadow-lg group relative">
+        <button onClick={() => setShowSettings(!showSettings)} className="p-3.5 bg-slate-900/80 backdrop-blur-md border border-slate-600 text-slate-300 rounded-full hover:text-white hover:bg-slate-700 hover:scale-110 transition-all shadow-lg group relative">
           <Settings size={20} />
           <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-black text-white text-[10px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">设置/谢幕</span>
         </button>
       </div>
 
-      {/* --- 设置菜单与谢幕表单 --- */}
+      {/* 设置与公墓弹窗 (保持逻辑不变，仅微调样式) */}
       <AnimatePresence>
         {showSettings && !showDeathForm && (
           <motion.div 
             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
-            className="fixed bottom-24 right-6 w-64 bg-slate-900 border border-slate-700 rounded-2xl p-4 shadow-2xl z-50"
+            className="fixed bottom-24 right-6 w-64 bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-2xl p-4 shadow-2xl z-50"
           >
             <h4 className="text-xs font-black text-slate-400 uppercase mb-3 px-2">命运抉择</h4>
             <div className="space-y-2">
@@ -501,39 +609,21 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             </div>
           </motion.div>
         )}
-
-        {showDeathForm && (
-          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 border border-slate-700 p-8 rounded-3xl w-full max-w-lg shadow-2xl">
-              <h2 className="text-2xl font-black text-white mb-2">{showDeathForm === 'death' ? '谢幕与墓志铭' : '化鬼契约'}</h2>
-              <p className="text-sm text-slate-400 mb-6">
-                {showDeathForm === 'death' ? '写下你的死因与墓志铭，提交后将生成世界墓碑，数据将被剥夺。' : '放弃肉身与精神体，以灵体状态游荡于世。'}
-              </p>
-              <textarea
-                value={deathText}
-                onChange={e => setDeathText(e.target.value)}
-                placeholder="在此书写你的落幕之辞..."
-                className="w-full h-32 p-4 bg-slate-950 border border-slate-800 rounded-xl text-slate-300 outline-none focus:border-sky-500/50 mb-6 text-sm resize-none"
-              />
-              <div className="flex gap-3">
-                <button onClick={() => setShowDeathForm(null)} className="flex-1 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700">取消</button>
-                <button onClick={handleSubmitDeath} className="flex-[2] py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-500 shadow-lg">提交审核</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
+        {/* 谢幕表单与公墓详情代码省略以保持篇幅，逻辑与原版一致，样式自动继承全局Tailwind设置 */}
       </AnimatePresence>
 
-      {/* --- 世界公墓系统 --- */}
+      {/* 公墓弹窗 */}
       <AnimatePresence>
         {showGraveyard && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
             <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ opacity: 0 }} className="bg-slate-900 border border-slate-700 rounded-[32px] w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+               {/* 头部 */}
               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                 <h2 className="text-2xl font-black text-white flex items-center gap-3"><Cross className="text-slate-500"/> 世界公墓</h2>
                 <button onClick={() => setShowGraveyard(false)} className="text-slate-500 hover:text-white"><X size={24}/></button>
               </div>
               
+              {/* 内容区域 */}
               <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar bg-slate-950">
                 {tombstones.length === 0 ? (
                   <div className="text-center py-20 text-slate-600 font-bold tracking-widest">目前无人长眠于此</div>
@@ -558,7 +648,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                         "{t.deathDescription}"
                       </p>
 
-                      {/* 评论展开区域 */}
                       <AnimatePresence>
                         {expandedTombstone === t.id && (
                           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
@@ -597,6 +686,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           </div>
         )}
       </AnimatePresence>
+
       <AnimatePresence>
         {activeRPSessionId && (
           <RoleplayWindow 
@@ -606,6 +696,27 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           />
         )}
       </AnimatePresence>
+      
+      {showDeathForm && (
+          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center p-4">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 border border-slate-700 p-8 rounded-3xl w-full max-w-lg shadow-2xl">
+              <h2 className="text-2xl font-black text-white mb-2">{showDeathForm === 'death' ? '谢幕与墓志铭' : '化鬼契约'}</h2>
+              <p className="text-sm text-slate-400 mb-6">
+                {showDeathForm === 'death' ? '写下你的死因与墓志铭，提交后将生成世界墓碑，数据将被剥夺。' : '放弃肉身与精神体，以灵体状态游荡于世。'}
+              </p>
+              <textarea
+                value={deathText}
+                onChange={e => setDeathText(e.target.value)}
+                placeholder="在此书写你的落幕之辞..."
+                className="w-full h-32 p-4 bg-slate-950 border border-slate-800 rounded-xl text-slate-300 outline-none focus:border-sky-500/50 mb-6 text-sm resize-none"
+              />
+              <div className="flex gap-3">
+                <button onClick={() => setShowDeathForm(null)} className="flex-1 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700">取消</button>
+                <button onClick={handleSubmitDeath} className="flex-[2] py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-500 shadow-lg">提交审核</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
     </div>
   );
 }

@@ -133,7 +133,7 @@ export function SpiritBureauView({ user, onExit, showToast, fetchGlobalData }: P
       {/* 背景层 */}
       <div 
         className="absolute inset-0 bg-cover bg-center opacity-60"
-        style={{ backgroundImage: "url('/灵异.jpg')" }}
+        style={{ backgroundImage: "url('/灵异管理所.jpg')" }}
       >
         <div className="absolute inset-0 bg-cyan-900/10 mix-blend-color-burn pointer-events-none"></div>
       </div>
