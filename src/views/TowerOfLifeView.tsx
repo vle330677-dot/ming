@@ -132,6 +132,45 @@ export function TowerOfLifeView({ user, onExit, showToast, fetchGlobalData }: Pr
     fetchGlobalData();
     showToast("身份抽取完毕！你的命运已在此定格。");
   };
+  // 在 src/views/GameView.tsx 内部：
+
+  const handleExploreSkill = async () => {
+    if (!selectedLocation) return;
+    try {
+      const res = await fetch('/api/explore/skill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, locationId: selectedLocation.id })
+      });
+      const data = await res.json();
+      
+      // 成功获得书本或者技能，给出 Toast 提示
+      if (data.success) {
+        showToast(data.message); 
+      } else {
+        showToast(`⚠️ ${data.message}`);
+      }
+    } catch (e) {
+      showToast("探索时发生了未知错误！");
+    }
+  };
+
+
+// 修改弹窗 UI 的按钮组 (位于渲染区域的大约 220 行左右)：
+<div className="flex flex-col gap-3">
+  <div className="flex gap-3">
+    <button onClick={() => handleLocationAction('enter')} className="flex-1 px-6 py-3 bg-white text-slate-950 font-black rounded-xl text-xs hover:bg-slate-200 transition-colors shadow-lg shadow-white/10">
+      进入区域
+    </button>
+    <button onClick={() => handleLocationAction('stay')} className="flex-1 px-6 py-3 bg-slate-800 text-white font-black rounded-xl text-xs hover:bg-slate-700 transition-colors border border-slate-700">
+      在此驻足
+    </button>
+  </div>
+  {/* 新增：全局地图探索寻找技能按钮 */}
+  <button onClick={handleExploreSkill} className="w-full px-6 py-3 bg-indigo-600/20 text-indigo-400 border border-indigo-500/50 font-black rounded-xl text-xs hover:bg-indigo-600 hover:text-white transition-colors shadow-[0_0_15px_rgba(79,70,229,0.2)]">
+    🔎 搜索区域掉落 (随机领悟派系技能)
+  </button>
+</div>
 
   const handleGameComplete = (newProgress: number) => {
     setShowMiniGame(false);

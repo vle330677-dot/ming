@@ -133,6 +133,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     faction TEXT, 
+    tier TEXT DEFAULT '低阶', -- 新增：低阶、中阶、高阶
     description TEXT,
     npcId TEXT
   );
@@ -273,6 +274,7 @@ const addColumn = (table: string, col: string, type: string) => {
 addColumn('users', 'isHidden', 'INTEGER DEFAULT 0');
 addColumn('users', 'mentalProgress', 'REAL DEFAULT 0');
 addColumn('users', 'allowVisit', 'INTEGER DEFAULT 1');
+addColumn('global_skills', 'tier', "TEXT DEFAULT '低阶'");
 addColumn('roleplay_messages', 'locationId', 'TEXT');
 addColumn('global_items', 'npcId', 'TEXT');
 addColumn('global_skills', 'npcId', 'TEXT');
@@ -282,15 +284,15 @@ addColumn('rp_archives', 'participantNames', 'TEXT');
 // ================= 2. 初始数据种子 =================
 const seedData = () => {
   const initialSkills = [
-    { name: '精神梳理', faction: '向导', description: '安抚哨兵狂躁的精神图景。' },
-    { name: '五感强化', faction: '哨兵', description: '短时间内极大提升战场感知力。' },
-    { name: '圣所祷告', faction: '圣所', description: '未分化幼崽的必修课，平复情绪。' }
+    { name: '精神梳理', faction: '治疗系', tier: '低阶', description: '基础的精神安抚技能。' },
+    { name: '五感强化', faction: '感知系', tier: '中阶', description: '短时间内极大提升战场感知力。' },
+    { name: '格斗精通', faction: '物理系', tier: '低阶', description: '提升近战肉搏能力。' }
   ];
 
   const skillCount = db.prepare('SELECT COUNT(*) as count FROM global_skills').get() as any;
   if (skillCount.count === 0) {
-    const insertSkill = db.prepare('INSERT INTO global_skills (name, faction, description) VALUES (?, ?, ?)');
-    initialSkills.forEach((s) => insertSkill.run(s.name, s.faction, s.description));
+    const insertSkill = db.prepare('INSERT INTO global_skills (name, faction, tier, description) VALUES (?, ?, ?, ?)');
+    initialSkills.forEach((s) => insertSkill.run(s.name, s.faction, s.tier, s.description));
   }
 
   const initialItems = [
@@ -309,6 +311,19 @@ const seedData = () => {
 seedData();
 
 // ================= 3. 辅助配置 =================
+
+// 地点与掉落派系的映射 (用于探索掉落技能)
+const LOCATION_FACTION_MAP: Record<string, string> = {
+  'tower_of_life': '精神系',
+  'london_tower': '元素系',
+  'paranormal_office': '感知系',
+  'demon_society': '信息系',
+  'slums': '炼金系',     // 西市
+  'rich_area': '强化系', // 东市
+  'sanctuary': '治疗系',
+  'army': '物理系'
+};
+
 const JOB_SALARIES: Record<string, number> = {
   '圣子/圣女': 5000, 侍奉者: 1000, 候选者: 3000, 仆从: 500,
   伦敦塔教师: 800, 伦敦塔职工: 400, 伦敦塔学员: 100,
@@ -387,9 +402,9 @@ async function startServer() {
   });
 
   app.post('/api/admin/skills', (req, res) => {
-    const { name, faction, description, npcId } = req.body;
-    db.prepare('INSERT INTO global_skills (name, faction, description, npcId) VALUES (?, ?, ?, ?)')
-      .run(name, faction, description, npcId || null);
+    const { name, faction, tier, description, npcId } = req.body;
+    db.prepare('INSERT INTO global_skills (name, faction, tier, description, npcId) VALUES (?, ?, ?, ?, ?)')
+      .run(name, faction, tier || '低阶', description, npcId || null);
     res.json({ success: true });
   });
 
@@ -606,6 +621,40 @@ async function startServer() {
     });
   });
 
+  // --- 新增：大地图探索寻找技能 ---
+  app.post('/api/explore/skill', (req, res) => {
+    const { userId, locationId } = req.body;
+    const targetFaction = LOCATION_FACTION_MAP[locationId];
+    
+    if (!targetFaction) return res.json({ success: false, message: '这里的空气很平静，无法领悟任何派系技能。' });
+
+    const user = db.prepare('SELECT faction FROM users WHERE id = ?').get(userId) as any;
+    if (!user) return res.json({ success: false, message: '用户不存在' });
+
+    // 随机获取该派系的一个技能 (无论阶级)
+    const skills = db.prepare('SELECT * FROM global_skills WHERE faction = ?').all(targetFaction) as any[];
+    if (skills.length === 0) return res.json({ success: false, message: `管理员尚未在该区域部署【${targetFaction}】技能库，你什么都没找到。` });
+
+    const randomSkill = skills[Math.floor(Math.random() * skills.length)];
+
+    if (user.faction === targetFaction) {
+        // 本派系，直接学习
+        db.prepare('INSERT INTO user_skills (userId, name, level) VALUES (?, ?, 1)').run(userId, randomSkill.name);
+        res.json({ success: true, message: `探索大成功！你顿悟了本派系（${targetFaction}）技能：【${randomSkill.name}】(Lv.1)`, type: 'learned' });
+    } else {
+        // 非本派系，转化为技能书放入背包
+        const bookName = `[技能书] ${randomSkill.name} (${randomSkill.faction})`;
+        const existing = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(userId, bookName) as any;
+        if (existing) {
+            db.prepare('UPDATE user_inventory SET qty = qty + 1 WHERE id = ?').run(existing.id);
+        } else {
+            db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(userId, bookName);
+        }
+        res.json({ success: true, message: `你探索到了一本【${bookName}】！由于派系不符无法直接学习，已放入背包（可交易/出售）。`, type: 'book' });
+    }
+  });
+
+
   // --- 技能管理：删除技能 ---
   app.delete('/api/users/:userId/skills/:skillId', (req, res) => {
     db.prepare('DELETE FROM user_skills WHERE id = ? AND userId = ?').run(req.params.skillId, req.params.userId);
@@ -617,29 +666,33 @@ async function startServer() {
     const { skillName } = req.body;
     const userId = req.params.userId;
     
-    // 检查是否有至少2个同名技能用于合并
-    const skills = db.prepare('SELECT * FROM user_skills WHERE userId = ? AND name = ?').all(userId, skillName) as any[];
+    // 找出该用户所有同名技能，按等级从小到大排
+    const skills = db.prepare('SELECT * FROM user_skills WHERE userId = ? AND name = ? ORDER BY level ASC').all(userId, skillName) as any[];
     
-    if (skills.length < 2) {
-      return res.json({ success: false, message: '需要至少2个同名技能才能进行融合升阶。' });
+    if (skills.length < 2) return res.json({ success: false, message: '需要至少 2 个同名技能才能进行融合。' });
+
+    // 寻找两个等级完全一样的技能进行合成
+    let id1 = -1, id2 = -1, targetLevel = -1;
+    for (let i = 0; i < skills.length - 1; i++) {
+        if (skills[i].level === skills[i+1].level) {
+            id1 = skills[i].id;
+            id2 = skills[i+1].id;
+            targetLevel = skills[i].level + 1;
+            break;
+        }
     }
 
-    // 简单的合并逻辑：删除前两个，生成一个新的高级版（或者等级+1）
-    const id1 = skills[0].id;
-    const id2 = skills[1].id;
-    const newLevel = (skills[0].level || 1) + 1;
-
-    const deleteStmt = db.prepare('DELETE FROM user_skills WHERE id IN (?, ?)');
-    const insertStmt = db.prepare('INSERT INTO user_skills (userId, name, level) VALUES (?, ?, ?)');
+    if (id1 === -1) return res.json({ success: false, message: '你需要两个等级完全相同的同名技能才能升阶。' });
 
     const transaction = db.transaction(() => {
-      deleteStmt.run(id1, id2);
-      insertStmt.run(userId, skillName, newLevel);
+      db.prepare('DELETE FROM user_skills WHERE id IN (?, ?)').run(id1, id2);
+      db.prepare('INSERT INTO user_skills (userId, name, level) VALUES (?, ?, ?)').run(userId, skillName, targetLevel);
     });
     transaction();
 
-    res.json({ success: true, message: `融合成功！${skillName} 提升到了 Lv.${newLevel}` });
+    res.json({ success: true, message: `融合成功！【${skillName}】 提升到了 Lv.${targetLevel}` });
   });
+
 
   // --- 精神力训练系统 ---
   app.post('/api/training/complete', (req, res) => {
@@ -1180,6 +1233,7 @@ async function startServer() {
     const commissions = db.prepare('SELECT * FROM commissions ORDER BY createdAt DESC').all();
     res.json({ success: true, commissions });
   });
+  
 
   app.post('/api/commissions', (req, res) => {
     const { id, publisherId, publisherName, title, content, difficulty, reward, isAnonymous } = req.body;
@@ -1212,38 +1266,10 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // ================= 6. 前端路由 =================
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
-    app.use(vite.middlewares);
-
-    app.use('*', async (req, res, next) => {
-      if (req.originalUrl.startsWith('/api')) return next();
-      try {
-        let template =
-          '<!DOCTYPE html><html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>';
-        template = await vite.transformIndexHtml(req.originalUrl, template);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
-      } catch (e) {
-        vite.ssrFixStacktrace(e as Error);
-        next(e);
-      }
-    });
-  } else {
-    const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      if (req.originalUrl.startsWith('/api')) return res.status(404).send('API not found');
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
-
-  // --- 公墓与留言系统 ---
+  // ==========================================
+  // 👇 公墓与对戏存档 API 👇
+  // ==========================================
+  
   app.get('/api/graveyard', (_req, res) => {
     const tombstones = db.prepare('SELECT * FROM tombstones ORDER BY id DESC').all();
     res.json({ success: true, tombstones });
@@ -1262,7 +1288,7 @@ async function startServer() {
   });
 
   app.delete('/api/graveyard/comments/:commentId', (req, res) => {
-    const { userId } = req.body; // 校验是不是本人删的
+    const { userId } = req.body;
     db.prepare('DELETE FROM tombstone_comments WHERE id = ? AND userId = ?').run(req.params.commentId, userId);
     res.json({ success: true });
   });
@@ -1270,7 +1296,6 @@ async function startServer() {
   // 获取个人的所有对戏存档
   app.get('/api/users/:id/rp_archives', (req, res) => {
     const userId = req.params.id;
-    // SQLite 的 LIKE 查找 JSON 里的 ID，虽然偷懒但在此体量下绝对够用
     const archives = db.prepare(`SELECT * FROM rp_archives WHERE participants LIKE ? ORDER BY createdAt DESC`).all(`%${userId}%`) as any[];
     for (let arc of archives) {
       arc.messages = db.prepare('SELECT * FROM rp_archive_messages WHERE archiveId = ? ORDER BY createdAt ASC').all(arc.id);
@@ -1285,6 +1310,40 @@ async function startServer() {
       arc.messages = db.prepare('SELECT * FROM rp_archive_messages WHERE archiveId = ? ORDER BY createdAt ASC').all(arc.id);
     }
     res.json({ success: true, archives });
+  });
+
+
+  // ==========================================
+  // 👇 前端路由挂载和监听端口必须放在整个函数的最后面 👇
+  // ==========================================
+
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
+    app.use(vite.middlewares);
+
+    app.use('*', async (req, res, next) => {
+      if (req.originalUrl.startsWith('/api')) return next();
+      try {
+        let template = '<!DOCTYPE html><html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>';
+        template = await vite.transformIndexHtml(req.originalUrl, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
+  } else {
+    const distPath = path.join(__dirname, 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      if (req.originalUrl.startsWith('/api')) return res.status(404).send('API not found');
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
   });
 }
 

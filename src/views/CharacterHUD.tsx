@@ -1,9 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from '../types';
 import { 
   ChevronRight, ChevronLeft, User as UserIcon, Zap, Heart, 
-  Activity, Shield, Briefcase, Award, Skull 
+  Activity, Shield, Briefcase, Award, Skull, BookOpen, Trash2, ArrowUpCircle
 } from 'lucide-react';
 
 interface Props {
@@ -14,7 +14,52 @@ interface Props {
 export function CharacterHUD({ user, onLogout }: Props) {
   // 默认展开
   const [isExpanded, setIsExpanded] = useState(true);
+  const [skills, setSkills] = useState<any[]>([]);
   const containerRef = useRef(null);
+
+  // 定期拉取技能或依靠事件触发更新
+  const fetchSkills = async () => {
+    try {
+      const res = await fetch(`/api/users/${user.id}/skills`);
+      const data = await res.json();
+      if (data.success) setSkills(data.skills);
+    } catch (e) {
+      console.error("拉取技能失败", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchSkills();
+    const timer = setInterval(fetchSkills, 10000); // 每10秒自动刷新一次状态
+    return () => clearInterval(timer);
+  }, [user.id]);
+
+  // 技能合成
+  const handleMergeSkill = async (skillName: string) => {
+    try {
+      const res = await fetch(`/api/users/${user.id}/skills/merge`, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ skillName })
+      });
+      const data = await res.json();
+      alert(data.message);
+      if (data.success) fetchSkills();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // 技能遗忘
+  const handleForgetSkill = async (skillId: number) => {
+    if (!confirm('遗忘后技能将永久消失，且不会返还技能书，确定吗？')) return;
+    try {
+      await fetch(`/api/users/${user.id}/skills/${skillId}`, { method: 'DELETE' });
+      fetchSkills();
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   // 计算狂暴值颜色
   const furyColor = (user.fury || 0) > 80 ? 'bg-red-600 animate-pulse' : 'bg-purple-600';
@@ -84,6 +129,44 @@ export function CharacterHUD({ user, onLogout }: Props) {
                   <InfoBox icon={<Award size={12}/>} label="精神" value={user.mentalRank || '-'} highlight />
                   <InfoBox icon={<Award size={12}/>} label="肉体" value={user.physicalRank || '-'} highlight />
                 </div>
+
+                {/* ================= 新增：技能面板 ================= */}
+                <div className="pt-4 border-t border-slate-700/50">
+                  <div className="text-[10px] text-slate-400 uppercase font-black flex justify-between items-center mb-2">
+                    <span className="flex items-center gap-1"><BookOpen size={12} /> 已习得派系技能</span>
+                  </div>
+                  {skills.length === 0 ? (
+                    <div className="text-[10px] text-slate-500 text-center py-2 italic border border-slate-800 rounded-lg">暂未领悟任何技能</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {skills.map(s => (
+                        <div key={s.id} className="bg-slate-800/80 border border-slate-700 rounded-lg p-2 flex justify-between items-center">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-slate-200">{s.name}</span>
+                            <span className="text-[9px] font-black text-sky-400 uppercase mt-0.5">Lv.{s.level}</span>
+                          </div>
+                          <div className="flex gap-1">
+                            <button 
+                              onClick={() => handleMergeSkill(s.name)} 
+                              className="p-1.5 bg-sky-900/30 text-sky-400 rounded-md hover:bg-sky-600 hover:text-white transition-colors" 
+                              title="同等级融合升阶"
+                            >
+                              <ArrowUpCircle size={14} />
+                            </button>
+                            <button 
+                              onClick={() => handleForgetSkill(s.id)} 
+                              className="p-1.5 bg-rose-900/30 text-rose-400 rounded-md hover:bg-rose-600 hover:text-white transition-colors" 
+                              title="遗忘删除"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {/* ================================================= */}
 
                 <div className="pt-2 border-t border-slate-700">
                   <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
