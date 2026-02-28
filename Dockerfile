@@ -4,6 +4,9 @@ FROM node:20-alpine
 # 设置工作目录
 WORKDIR /app
 
+# [新增] 安装构建 native 模块所需的工具 (Python, Make, G++)
+RUN apk add --no-cache python3 make g++
+
 # 复制 package.json 和 lock 文件
 COPY package*.json ./
 
@@ -19,7 +22,7 @@ RUN npm run build
 # 暴露端口
 EXPOSE 3000
 
-# 🌟 新增这一行：强制设置为生产环境
+# 强制设置为生产环境
 ENV NODE_ENV=production
 
 # 启动 Node.js 服务器
