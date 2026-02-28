@@ -865,6 +865,16 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           />
         )}
       </AnimatePresence>
+      <AnimatePresence>
+  {rpSessionId && rpWindowOpen && (
+    <RoleplayWindow
+      sessionId={rpSessionId}
+      currentUser={user}
+      onClose={() => setRPWindowOpen(false)}
+    />
+  )}
+</AnimatePresence>
+
 
       {(user.status === 'pending_death' || user.status === 'pending_ghost') && (
         <div className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md">
