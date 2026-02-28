@@ -10,7 +10,7 @@ interface Props {
   currentUser: User;
   targetUser: User;
   onClose: () => void;
-  onStartRP: (target: User) => Promise<void> | void; // 改为可异步
+  onStartRP: (target: User) => Promise<boolean>; // ✅ 统一为返回成功态
   showToast: (msg: string) => void;
 }
 
@@ -74,8 +74,12 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
   const startRPNow = async () => {
     try {
       setIsStartingRP(true);
-      await onStartRP(targetUser);
-      onClose();
+      const ok = await onStartRP(targetUser);
+      if (ok) {
+        onClose(); // ✅ 只有成功创建会话才关闭
+      } else {
+        showToast('建立对戏连接失败，请稍后重试');
+      }
     } catch (e) {
       console.error(e);
       showToast('建立对戏连接失败，请稍后重试');
@@ -110,18 +114,37 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         });
         break;
       }
+
+      // ✅ 补齐偷窃
+      case 'steal': {
+        const res = await fetch('/api/interact/steal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thiefId: currentUser.id, targetId: targetUser.id })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          showToast(data.message || '偷窃失败');
+          return;
+        }
+        showToast(data.message || '偷窃成功');
+        break;
+      }
+
       case 'soothe':
         await fetch('/api/guide/soothe', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sentinelId: targetUser.id, guideId: currentUser.id })
         });
         break;
+
       case 'prank':
         await fetch('/api/interact/prank', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ghostId: currentUser.id, targetId: targetUser.id, targetRole: targetUser.role })
         });
         break;
+
       case 'probe': {
         const probeRes = await fetch('/api/interact/probe', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -131,6 +154,7 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         if (data.success) alert(`【探查结果】你窥探到了对方的秘密数据：${data.probedStat.key} = ${data.probedStat.value}`);
         break;
       }
+
       default:
         break;
     }
