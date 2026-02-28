@@ -10,7 +10,7 @@ interface Props {
   currentUser: User;
   targetUser: User;
   onClose: () => void;
-  onStartRP: (target: User) => void;
+  onStartRP: (target: User) => Promise<void> | void; // 改为可异步
   showToast: (msg: string) => void;
 }
 
@@ -18,17 +18,18 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
   const [noteContent, setNoteContent] = useState('');
   const [showNotes, setShowNotes] = useState(false);
   const [isActionPending, setIsActionPending] = useState(false);
+  const [isStartingRP, setIsStartingRP] = useState(false);
 
   useEffect(() => {
     fetch(`/api/notes/${currentUser.id}/${targetUser.id}`)
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setNoteContent(d.content || ''); });
+      .then(r => r.json())
+      .then(d => { if (d.success) setNoteContent(d.content || ''); })
+      .catch(() => {});
   }, [currentUser.id, targetUser.id]);
 
   const saveNote = async () => {
     await fetch('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ownerId: currentUser.id, targetId: targetUser.id, content: noteContent })
     });
     showToast('私人笔记已保存');
@@ -39,144 +40,102 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
     const myRole = currentUser.role;
     const tRole = targetUser.role;
 
-    if (myRole === '普通人' && tRole === '鬼魂') return '你什么都没看到，但感觉周围有一股令人毛骨悚然的冷意...';
+    if (myRole === '普通人' && tRole === '鬼魂') return "你什么都没看到，但感觉周围有一股令人毛骨悚然的冷意...";
     if (myRole === '普通人') {
-      if (tRole === '哨兵') return '对方身上散发着无形的压迫感，让你觉得有些喘不过气。';
-      if (tRole === '向导') return '对方的气场让你觉得莫名的安心和亲切。';
-      return '这是一个看起来很普通的人。';
+      if (tRole === '哨兵') return "对方身上散发着无形的压迫感，让你觉得有些喘不过气。";
+      if (tRole === '向导') return "对方的气场让你觉得莫名的安心和亲切。";
+      return "这是一个看起来很普通的人。";
     }
     if (myRole === '鬼魂') {
-      if (tRole === '哨兵') return '极度危险！对方的精神波动像针刺一样威胁着你的灵体。';
-      if (tRole === '向导') return '对方的精神海很温暖，让你有种想靠近的亲和感。';
-      if (tRole === '普通人') return '一个毫无灵力波动的普通躯壳。';
-      return '你们对视了一眼，确认过眼神，都是同道中鬼。';
+      if (tRole === '哨兵') return "极度危险！对方的精神波动像针刺一样威胁着你的灵体。";
+      if (tRole === '向导') return "对方的精神海很温暖，让你有种想靠近的亲和感。";
+      if (tRole === '普通人') return "一个毫无灵力波动的普通躯壳。";
+      return "你们对视了一眼，确认过眼神，都是同道中鬼。";
     }
     if (myRole === '向导') {
       if (tRole === '哨兵') {
         const fury = targetUser.fury || 0;
-        if (fury >= 80) return '警报！对方的精神图景正在崩塌边缘，狂暴的能量极度危险！';
-        if (fury >= 60) return '对方的精神状态有些紧绷，能感受到明显的压力。';
-        return '对方的精神力波动平稳，一切正常。';
+        if (fury >= 80) return "警报！对方的精神图景正在崩塌边缘，狂暴的能量极度危险！";
+        if (fury >= 60) return "对方的精神状态有些紧绷，能感受到明显的压力。";
+        return "对方的精神力波动平稳，一切正常。";
       }
-      if (tRole === '鬼魂') return '捕捉到了异常的离散精神体波动。';
-      if (tRole === '普通人') return '这个人身上没有精神力波动的痕迹。';
+      if (tRole === '鬼魂') return "捕捉到了异常的离散精神体波动。";
+      if (tRole === '普通人') return "这个人身上没有精神力波动的痕迹。";
     }
     if (myRole === '哨兵') {
-      if (tRole === '向导') return '对方的存在本身就像一剂良药，让你感到本能的亲近与放松。';
-      if (tRole === '鬼魂') return '周围似乎有些烦人的、黏糊糊的波动存在。';
-      if (tRole === '普通人') return '毫无威胁的普通人。';
-      return '确认过了，是同类。精神屏障互相摩擦的感觉并不好受。';
+      if (tRole === '向导') return "对方的存在本身就像一剂良药，让你感到本能的亲近与放松。";
+      if (tRole === '鬼魂') return "周围似乎有些烦人的、黏糊糊的波动存在。";
+      if (tRole === '普通人') return "毫无威胁的普通人。";
+      return "确认过了，是同类。精神屏障互相摩擦的感觉并不好受。";
     }
-    return '你们相互打量着对方。';
+    return "你们相互打量着对方。";
   }, [currentUser, targetUser]);
 
+  const startRPNow = async () => {
+    try {
+      setIsStartingRP(true);
+      await onStartRP(targetUser);
+      onClose();
+    } catch (e) {
+      console.error(e);
+      showToast('建立对戏连接失败，请稍后重试');
+    } finally {
+      setIsStartingRP(false);
+    }
+  };
+
   const handleAction = async (actionType: string) => {
-    if (isActionPending) return;
-
-    const wantsSkip = window.confirm(
-      `是否向对方发送【免对戏跳过】请求？\n(若对方同意，直接结算；若不同意，此动作失效)`
-    );
-
+    const wantsSkip = window.confirm(`是否向对方发送【免对戏跳过】请求？\n(若对方同意，直接结算；若不同意，此动作失效)`);
     if (wantsSkip) {
       setIsActionPending(true);
       showToast('已向对方发送跳过请求，等待回应...');
-      setTimeout(() => {
-        setIsActionPending(false);
-        showToast('对方拒绝了你的跳过请求，动作取消。');
-      }, 3000);
+      setTimeout(() => { setIsActionPending(false); showToast('对方拒绝了你的跳过请求，动作取消。'); }, 3000);
       return;
     }
 
-    try {
-      switch (actionType) {
-        case 'combat': {
-          const rankMap: Record<string, number> = {
-            SSS: 7, SS: 6, S: 5, A: 4, B: 3, C: 2, D: 1, 无: 0
-          };
+    switch (actionType) {
+      case 'combat': {
+        const rankMap: Record<string, number> = { 'SSS': 7, 'SS': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2, 'D': 1, '无': 0 };
+        const myScore = rankMap[currentUser.mentalRank || '无'] + rankMap[currentUser.physicalRank || '无'];
+        const tScore = rankMap[targetUser.mentalRank || '无'] + rankMap[targetUser.physicalRank || '无'];
 
-          const myScore =
-            (rankMap[currentUser.mentalRank || '无'] || 0) +
-            (rankMap[currentUser.physicalRank || '无'] || 0);
-          const tScore =
-            (rankMap[targetUser.mentalRank || '无'] || 0) +
-            (rankMap[targetUser.physicalRank || '无'] || 0);
+        await fetch('/api/interact/combat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attackerId: currentUser.id, defenderId: targetUser.id, attackerScore: myScore, defenderScore: tScore })
+        });
 
-          const combatRes = await fetch('/api/interact/combat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              attackerId: currentUser.id,
-              defenderId: targetUser.id,
-              attackerScore: myScore,
-              defenderScore: tScore
-            })
-          });
-          const combatData = await combatRes.json();
-
-          await fetch('/api/combat/end', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: currentUser.id })
-          });
-
-          showToast(combatData?.isAttackerWin ? '战斗判定：你占了上风。' : '战斗判定：你略处下风。');
-          break;
-        }
-
-        case 'soothe': {
-          const res = await fetch('/api/guide/soothe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sentinelId: targetUser.id, guideId: currentUser.id })
-          });
-          const data = await res.json();
-          showToast(data.message || '抚慰完成');
-          break;
-        }
-
-        case 'prank': {
-          const res = await fetch('/api/interact/prank', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ghostId: currentUser.id, targetId: targetUser.id, targetRole: targetUser.role })
-          });
-          const data = await res.json();
-          showToast(data.message || '恶作剧完成');
-          break;
-        }
-
-        case 'probe': {
-          const probeRes = await fetch('/api/interact/probe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ targetId: targetUser.id })
-          });
-          const data = await probeRes.json();
-          if (data.success) alert(`【探查结果】${data.probedStat.key} = ${data.probedStat.value}`);
-          break;
-        }
-
-        case 'steal': {
-          const stealRes = await fetch('/api/interact/steal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ attackerId: currentUser.id, targetId: targetUser.id })
-          });
-          const stealData = await stealRes.json();
-          showToast(stealData.message || '偷窃动作已执行');
-          if (!stealData.success) return; // 失败则不强制拉RP
-          break;
-        }
-
-        default:
-          break;
+        await fetch('/api/combat/end', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: currentUser.id })
+        });
+        break;
       }
-
-      onStartRP(targetUser);
-      onClose();
-    } catch {
-      showToast('动作执行失败，请稍后重试');
+      case 'soothe':
+        await fetch('/api/guide/soothe', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sentinelId: targetUser.id, guideId: currentUser.id })
+        });
+        break;
+      case 'prank':
+        await fetch('/api/interact/prank', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ghostId: currentUser.id, targetId: targetUser.id, targetRole: targetUser.role })
+        });
+        break;
+      case 'probe': {
+        const probeRes = await fetch('/api/interact/probe', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetId: targetUser.id })
+        });
+        const data = await probeRes.json();
+        if (data.success) alert(`【探查结果】你窥探到了对方的秘密数据：${data.probedStat.key} = ${data.probedStat.value}`);
+        break;
+      }
+      default:
+        break;
     }
+
+    await startRPNow();
   };
 
   if (currentUser.role === '普通人' && targetUser.role === '鬼魂') {
@@ -196,7 +155,7 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
         className="relative flex items-center justify-center w-[500px] h-[500px]"
       >
         <button onClick={onClose} className="absolute top-0 right-0 z-50 p-2 text-slate-500 hover:text-white bg-slate-900 rounded-full border border-slate-700">
@@ -218,16 +177,25 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
               ??? · ???
             </p>
             <p className="text-sm text-slate-300 italic">"{perspectiveText}"</p>
+            {isActionPending && <p className="text-[10px] text-amber-400 mt-2">等待对方处理跳过请求...</p>}
           </div>
         </div>
 
         <div className="absolute inset-0 z-20 pointer-events-none">
-          <ActionButton onClick={() => { onStartRP(targetUser); onClose(); }} icon={<MessageCircle />} label="发起对戏" cls="top-0 left-1/2 -translate-x-1/2" color="bg-sky-600 hover:bg-sky-500" />
+          <ActionButton
+            onClick={startRPNow}
+            icon={<MessageCircle />}
+            label={isStartingRP ? '连接中...' : '发起对戏'}
+            cls="top-0 left-1/2 -translate-x-1/2"
+            color="bg-sky-600 hover:bg-sky-500"
+            disabled={isStartingRP}
+          />
+
           <ActionButton onClick={() => handleAction('combat')} icon={<Swords />} label="发起战斗" cls="top-12 left-12" color="bg-rose-600 hover:bg-rose-500" />
-          <ActionButton onClick={() => showToast('已发送组队/纠缠请求（开发中）')} icon={<Users />} label="组队纠缠" cls="top-12 right-12" color="bg-indigo-600 hover:bg-indigo-500" />
+          <ActionButton onClick={() => showToast('已发送组队/纠缠请求')} icon={<Users />} label="组队纠缠" cls="top-12 right-12" color="bg-indigo-600 hover:bg-indigo-500" />
           <ActionButton onClick={() => handleAction('steal')} icon={<HandMetal />} label="暗中偷窃" cls="top-1/2 left-0 -translate-y-1/2" color="bg-slate-700 hover:bg-slate-600" />
           <ActionButton onClick={() => setShowNotes(true)} icon={<BookOpen />} label="小本本" cls="top-1/2 right-0 -translate-y-1/2" color="bg-amber-600 hover:bg-amber-500" />
-          <ActionButton onClick={() => showToast('交易系统开发中')} icon={<Coins />} label="发起交易" cls="bottom-12 left-12" color="bg-emerald-600 hover:bg-emerald-500" />
+          <ActionButton onClick={() => { }} icon={<Coins />} label="发起交易" cls="bottom-12 left-12" color="bg-emerald-600 hover:bg-emerald-500" />
           <ActionButton onClick={() => showToast('举报已提交至塔区议会')} icon={<ShieldAlert />} label="举报违规" cls="bottom-12 right-12" color="bg-red-800 hover:bg-red-700" />
 
           {currentUser.role === '鬼魂' && (
@@ -250,13 +218,11 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
               </div>
               <textarea
                 value={noteContent}
-                onChange={(e) => setNoteContent(e.target.value)}
-                placeholder="记录对方的派系、能力、等级..."
+                onChange={e => setNoteContent(e.target.value)}
+                placeholder="记录对方的派系、能力、性格等..."
                 className="w-full h-32 bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 outline-none focus:border-amber-500/50 resize-none mb-3"
               />
-              <button onClick={saveNote} className="w-full py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-500">
-                保存记录
-              </button>
+              <button onClick={saveNote} className="w-full py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-500">保存记录</button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -265,10 +231,14 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
   );
 }
 
-function ActionButton({ icon, label, onClick, cls, color }: any) {
+function ActionButton({ icon, label, onClick, cls, color, disabled = false }: any) {
   return (
     <div className={`absolute pointer-events-auto group ${cls}`}>
-      <button onClick={onClick} className={`w-14 h-14 rounded-full text-white flex items-center justify-center transition-all duration-300 hover:scale-110 shadow-lg border-2 border-slate-900 ${color}`}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`w-14 h-14 rounded-full text-white flex items-center justify-center transition-all duration-300 hover:scale-110 shadow-lg border-2 border-slate-900 ${color} disabled:opacity-50 disabled:cursor-not-allowed`}
+      >
         {icon}
       </button>
       <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2 py-1 bg-black/80 backdrop-blur rounded text-[10px] font-bold text-white opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity">
