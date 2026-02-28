@@ -7,7 +7,7 @@ type RPMessageRow = {
   senderId: number | null;
   senderName: string;
   content: string;
-  type: 'user' | 'system';
+  type: 'user' | 'system' | 'text';
   createdAt: string;
 };
 
@@ -27,7 +27,12 @@ type SessionRow = {
 };
 
 const now = () => new Date().toISOString();
-const genId = (prefix = 'ID') => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+function toSafeUserId(v: unknown): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
 
 function mapSessionShape(session: SessionRow, members: MemberRow[]) {
   const mA = members[0];
@@ -54,13 +59,22 @@ export function createRpRouter(db: Database.Database) {
     try {
       const {
         sessionId,
-        userAId, userAName,
-        userBId, userBName,
-        locationId, locationName
+        userAId,
+        userAName,
+        userBId,
+        userBName,
+        locationId,
+        locationName
       } = req.body || {};
 
-      if (!sessionId || !userAId || !userBId) {
+      const aId = toSafeUserId(userAId);
+      const bId = toSafeUserId(userBId);
+
+      if (!sessionId || !aId || !bId) {
         return res.status(400).json({ success: false, message: '参数不完整' });
+      }
+      if (aId === bId) {
+        return res.status(400).json({ success: false, message: '会话双方不能是同一人' });
       }
 
       const getSession = db.prepare(`SELECT * FROM active_rp_sessions WHERE id = ?`);
@@ -74,26 +88,34 @@ export function createRpRouter(db: Database.Database) {
           `).run(sessionId, locationId || 'unknown', locationName || '未知区域');
 
           db.prepare(`
-            INSERT OR IGNORE INTO active_rp_members (sessionId, userId, userName, role)
-            VALUES (?, ?, ?, ?)
-          `).run(sessionId, userAId, userAName || `U${userAId}`, '未知');
-
-          db.prepare(`
-            INSERT OR IGNORE INTO active_rp_members (sessionId, userId, userName, role)
-            VALUES (?, ?, ?, ?)
-          `).run(sessionId, userBId, userBName || `U${userBId}`, '未知');
-
-          db.prepare(`
             INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type)
             VALUES (?, ?, ?, ?, ?)
           `).run(sessionId, 0, '系统', '对戏已建立连接。', 'system');
         } else {
           db.prepare(`
             UPDATE active_rp_sessions
-            SET status = 'active', endProposedBy = NULL, locationId = ?, locationName = ?
+            SET status = 'active',
+                endProposedBy = NULL,
+                locationId = ?,
+                locationName = ?
             WHERE id = ?
-          `).run(locationId || oldSession.locationId, locationName || oldSession.locationName, sessionId);
+          `).run(
+            locationId || oldSession.locationId || 'unknown',
+            locationName || oldSession.locationName || '未知区域',
+            sessionId
+          );
         }
+
+        // 无论新旧都补齐成员（防止成员表意外缺行）
+        db.prepare(`
+          INSERT OR IGNORE INTO active_rp_members (sessionId, userId, userName, role)
+          VALUES (?, ?, ?, ?)
+        `).run(sessionId, aId, userAName || `U${aId}`, '未知');
+
+        db.prepare(`
+          INSERT OR IGNORE INTO active_rp_members (sessionId, userId, userName, role)
+          VALUES (?, ?, ?, ?)
+        `).run(sessionId, bId, userBName || `U${bId}`, '未知');
 
         // 重新激活时清空离场记录
         db.prepare(`DELETE FROM active_rp_leaves WHERE sessionId = ?`).run(sessionId);
@@ -109,7 +131,9 @@ export function createRpRouter(db: Database.Database) {
   // 2) 获取某用户当前活跃会话
   router.get('/rp/session/active/:userId', (req, res) => {
     try {
-      const userId = Number(req.params.userId);
+      const userId = toSafeUserId(req.params.userId);
+      if (!userId) return res.status(400).json({ success: false, message: 'userId 非法' });
+
       const row = db.prepare(`
         SELECT s.*
         FROM active_rp_sessions s
@@ -121,8 +145,17 @@ export function createRpRouter(db: Database.Database) {
 
       if (!row) return res.json({ success: true, sessionId: null, session: null });
 
-      const members = db.prepare(`SELECT * FROM active_rp_members WHERE sessionId = ? ORDER BY userId ASC`).all(row.id) as MemberRow[];
-      return res.json({ success: true, sessionId: row.id, session: mapSessionShape(row, members) });
+      const members = db.prepare(`
+        SELECT * FROM active_rp_members
+        WHERE sessionId = ?
+        ORDER BY userId ASC
+      `).all(row.id) as MemberRow[];
+
+      return res.json({
+        success: true,
+        sessionId: row.id,
+        session: mapSessionShape(row, members)
+      });
     } catch (e: any) {
       return res.status(500).json({ success: false, message: e.message || '查询失败' });
     }
@@ -135,7 +168,12 @@ export function createRpRouter(db: Database.Database) {
       const session = db.prepare(`SELECT * FROM active_rp_sessions WHERE id = ?`).get(sessionId) as SessionRow | undefined;
       if (!session) return res.status(404).json({ success: false, message: '会话不存在' });
 
-      const members = db.prepare(`SELECT * FROM active_rp_members WHERE sessionId = ? ORDER BY userId ASC`).all(sessionId) as MemberRow[];
+      const members = db.prepare(`
+        SELECT * FROM active_rp_members
+        WHERE sessionId = ?
+        ORDER BY userId ASC
+      `).all(sessionId) as MemberRow[];
+
       const messages = db.prepare(`
         SELECT id, sessionId, senderId, senderName, content, type, createdAt
         FROM active_rp_messages
@@ -158,18 +196,39 @@ export function createRpRouter(db: Database.Database) {
     try {
       const sessionId = req.params.sessionId;
       const { senderId, senderName, content } = req.body || {};
-      if (!content || !String(content).trim()) {
+
+      const text = String(content ?? '').trim();
+      if (!text) {
         return res.status(400).json({ success: false, message: '消息不能为空' });
       }
 
-      const exists = db.prepare(`SELECT id, status FROM active_rp_sessions WHERE id = ?`).get(sessionId) as SessionRow | undefined;
+      const sid = toSafeUserId(senderId);
+      if (!sid) {
+        return res.status(400).json({ success: false, message: 'senderId 非法' });
+      }
+
+      const exists = db.prepare(`
+        SELECT id, status
+        FROM active_rp_sessions
+        WHERE id = ?
+      `).get(sessionId) as SessionRow | undefined;
+
       if (!exists) return res.status(404).json({ success: false, message: '会话不存在' });
       if (exists.status !== 'active') return res.status(400).json({ success: false, message: '会话已结束' });
+
+      const member = db.prepare(`
+        SELECT * FROM active_rp_members
+        WHERE sessionId = ? AND userId = ?
+      `).get(sessionId, sid) as MemberRow | undefined;
+
+      if (!member) {
+        return res.status(403).json({ success: false, message: '你不在该会话中' });
+      }
 
       db.prepare(`
         INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type)
         VALUES (?, ?, ?, ?, 'user')
-      `).run(sessionId, Number(senderId), senderName || `U${senderId}`, String(content));
+      `).run(sessionId, sid, senderName || member.userName || `U${sid}`, text);
 
       return res.json({ success: true });
     } catch (e: any) {
@@ -182,60 +241,123 @@ export function createRpRouter(db: Database.Database) {
     try {
       const sessionId = req.params.sessionId;
       const { userId, userName } = req.body || {};
-      const uid = Number(userId);
+      const uid = toSafeUserId(userId);
+
+      if (!uid) {
+        return res.status(400).json({ success: false, message: 'userId 非法' });
+      }
 
       const session = db.prepare(`SELECT * FROM active_rp_sessions WHERE id = ?`).get(sessionId) as SessionRow | undefined;
       if (!session) return res.status(404).json({ success: false, message: '会话不存在' });
 
+      // 已关闭就直接返回，防止重复归档
+      if (session.status === 'closed') {
+        return res.json({ success: true, closed: true, message: '会话已归档' });
+      }
+
+      const member = db.prepare(`
+        SELECT * FROM active_rp_members
+        WHERE sessionId = ? AND userId = ?
+      `).get(sessionId, uid) as MemberRow | undefined;
+
+      if (!member) {
+        return res.status(403).json({ success: false, message: '你不在该会话中' });
+      }
+
       const tx = db.transaction(() => {
+        const alreadyLeft = db.prepare(`
+          SELECT 1 FROM active_rp_leaves
+          WHERE sessionId = ? AND userId = ?
+        `).get(sessionId, uid);
+
         db.prepare(`
           INSERT OR REPLACE INTO active_rp_leaves (sessionId, userId, leftAt)
           VALUES (?, ?, CURRENT_TIMESTAMP)
         `).run(sessionId, uid);
 
-        db.prepare(`
-          INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type)
-          VALUES (?, 0, '系统', ?, 'system')
-        `).run(sessionId, `${userName || `U${uid}`} 离开了对戏`);
+        // 避免同一人重复点离开刷系统消息
+        if (!alreadyLeft) {
+          db.prepare(`
+            INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type)
+            VALUES (?, 0, '系统', ?, 'system')
+          `).run(sessionId, `${userName || member.userName || `U${uid}`} 离开了对戏`);
+        }
 
-        const memberCount = (db.prepare(`SELECT COUNT(*) as c FROM active_rp_members WHERE sessionId = ?`).get(sessionId) as any).c as number;
-        const leaveCount = (db.prepare(`SELECT COUNT(*) as c FROM active_rp_leaves WHERE sessionId = ?`).get(sessionId) as any).c as number;
+        const memberCount = (db.prepare(`
+          SELECT COUNT(*) as c
+          FROM active_rp_members
+          WHERE sessionId = ?
+        `).get(sessionId) as any).c as number;
+
+        // 只统计“既在 leave 表又在 members 表”的用户
+        const leaveCount = (db.prepare(`
+          SELECT COUNT(*) as c
+          FROM active_rp_leaves l
+          JOIN active_rp_members m
+            ON m.sessionId = l.sessionId
+           AND m.userId = l.userId
+          WHERE l.sessionId = ?
+        `).get(sessionId) as any).c as number;
 
         if (memberCount > 0 && leaveCount >= memberCount) {
-          // 关会话
           db.prepare(`UPDATE active_rp_sessions SET status = 'closed' WHERE id = ?`).run(sessionId);
 
-          // 读会话成员与消息
-          const members = db.prepare(`SELECT * FROM active_rp_members WHERE sessionId = ? ORDER BY userId ASC`).all(sessionId) as MemberRow[];
+          const members = db.prepare(`
+            SELECT * FROM active_rp_members
+            WHERE sessionId = ?
+            ORDER BY userId ASC
+          `).all(sessionId) as MemberRow[];
+
           const msgs = db.prepare(`
             SELECT senderId, senderName, content, type, createdAt
-            FROM active_rp_messages WHERE sessionId = ? ORDER BY id ASC
-          `).all(sessionId) as any[];
+            FROM active_rp_messages
+            WHERE sessionId = ?
+            ORDER BY id ASC
+          `).all(sessionId) as Array<{
+            senderId: number | null;
+            senderName: string;
+            content: string;
+            type: string;
+            createdAt: string;
+          }>;
 
           const participantIds = JSON.stringify(members.map(m => m.userId));
           const participantNames = members.map(m => m.userName).join(', ');
-          const archiveId = genId('ARC');
+          // 用稳定 ID 防止重复归档
+          const archiveId = `ARC-${sessionId}`;
 
-          db.prepare(`
-            INSERT INTO rp_archives (id, title, locationId, locationName, participants, participantNames, status, createdAt)
-            VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
-          `).run(
-            archiveId,
-            `${session.locationName || '未知地点'} 对戏存档`,
-            session.locationId || 'unknown',
-            session.locationName || '未知地点',
-            participantIds,
-            participantNames,
-            now()
-          );
+          const arcExists = db.prepare(`SELECT 1 FROM rp_archives WHERE id = ?`).get(archiveId);
+          if (!arcExists) {
+            db.prepare(`
+              INSERT INTO rp_archives
+              (id, title, locationId, locationName, participants, participantNames, status, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+            `).run(
+              archiveId,
+              `${session.locationName || '未知地点'} 对戏存档`,
+              session.locationId || 'unknown',
+              session.locationName || '未知地点',
+              participantIds,
+              participantNames,
+              now()
+            );
 
-          const ins = db.prepare(`
-            INSERT INTO rp_archive_messages (archiveId, senderId, senderName, content, type, createdAt)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `);
-          msgs.forEach((m) => {
-            ins.run(archiveId, m.senderId ?? 0, m.senderName || '未知', m.content || '', m.type || 'text', m.createdAt || now());
-          });
+            const ins = db.prepare(`
+              INSERT INTO rp_archive_messages (archiveId, senderId, senderName, content, type, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `);
+
+            msgs.forEach((m) => {
+              ins.run(
+                archiveId,
+                m.senderId ?? 0,
+                m.senderName || '未知',
+                m.content || '',
+                m.type || 'text',
+                m.createdAt || now()
+              );
+            });
+          }
         }
       });
 
@@ -248,13 +370,22 @@ export function createRpRouter(db: Database.Database) {
     }
   });
 
-  // 6) 后台档案读取（兼容你 AdminView）
+  // 6) 后台档案读取
   router.get('/admin/rp_archives', (_req, res) => {
     try {
-      const archives = db.prepare('SELECT * FROM rp_archives ORDER BY createdAt DESC').all() as any[];
+      const archives = db.prepare(`
+        SELECT * FROM rp_archives
+        ORDER BY createdAt DESC
+      `).all() as any[];
+
       for (const arc of archives) {
-        arc.messages = db.prepare('SELECT * FROM rp_archive_messages WHERE archiveId = ? ORDER BY createdAt ASC').all(arc.id);
+        arc.messages = db.prepare(`
+          SELECT * FROM rp_archive_messages
+          WHERE archiveId = ?
+          ORDER BY createdAt ASC, id ASC
+        `).all(arc.id);
       }
+
       return res.json({ success: true, archives });
     } catch (e: any) {
       return res.status(500).json({ success: false, message: e.message || '读取归档失败' });
