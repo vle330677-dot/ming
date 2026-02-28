@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Send, DoorOpen } from 'lucide-react';
+import { X, Send, DoorOpen, Minimize2, Maximize2 } from 'lucide-react';
 import { User } from '../types';
 
 interface Props {
   sessionId: string;
   currentUser: User;
-  onClose: () => void; // 仅关闭窗口
+  onClose: () => void; // 仅关闭窗口，不离开会话
 }
 
 interface RPMessage {
@@ -40,6 +40,8 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
   const [sending, setSending] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [hint, setHint] = useState('');
+  const [minimized, setMinimized] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const title = useMemo(() => {
@@ -79,8 +81,10 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
   }, [sessionId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    if (!minimized) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length, minimized]);
 
   const sendMessage = async () => {
     const content = input.trim();
@@ -137,34 +141,84 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
     }
   };
 
+  // 最小化状态：只显示小条
+  if (minimized) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 12 }}
+        className="fixed right-4 bottom-24 z-[260] w-[320px] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl"
+      >
+        <div className="px-3 py-2 flex items-center justify-between">
+          <div className="min-w-0">
+            <div className="text-[12px] text-white font-black truncate">{title}</div>
+            <div className="text-[10px] text-slate-400 truncate">Session: {sessionId}</div>
+          </div>
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={() => setMinimized(false)}
+              className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              title="展开"
+            >
+              <Maximize2 size={14} />
+            </button>
+            <button
+              onClick={handleLeave}
+              disabled={leaving}
+              className="p-1.5 rounded text-rose-300 hover:text-white hover:bg-rose-900/30 disabled:opacity-50"
+              title="离开会话"
+            >
+              <DoorOpen size={14} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              title="关闭窗口"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 16 }}
-      className="fixed right-4 bottom-24 z-[260] w-[420px] h-[68vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl"
+      exit={{ opacity: 0, y: 12 }}
+      className="fixed right-4 bottom-24 z-[260] w-[380px] h-[58vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl"
     >
       {/* 顶栏 */}
-      <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/90 flex items-center justify-between">
-        <div>
-          <h3 className="text-white font-black text-sm">{title}</h3>
-          <p className="text-[10px] text-slate-400">Session: {sessionId}</p>
+      <div className="px-4 py-2.5 border-b border-slate-700 bg-slate-900/90 flex items-center justify-between">
+        <div className="min-w-0">
+          <h3 className="text-white font-black text-sm truncate">{title}</h3>
+          <p className="text-[10px] text-slate-400 truncate">Session: {sessionId}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 ml-2">
+          <button
+            onClick={() => setMinimized(true)}
+            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+            title="缩小窗口"
+          >
+            <Minimize2 size={14} />
+          </button>
           <button
             onClick={handleLeave}
             disabled={leaving}
-            className="px-2.5 py-1 text-[11px] bg-rose-600/20 text-rose-300 border border-rose-500/30 rounded hover:bg-rose-600/30 disabled:opacity-50 flex items-center gap-1"
+            className="p-1.5 rounded text-rose-300 hover:text-white hover:bg-rose-900/30 disabled:opacity-50"
+            title="离开会话"
           >
-            <DoorOpen size={12} />
-            {leaving ? '处理中' : '离开'}
+            <DoorOpen size={14} />
           </button>
           <button
             onClick={onClose}
             className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800"
-            title="关闭窗口（不离开会话）"
+            title="关闭窗口（不离开）"
           >
-            <X size={16} />
+            <X size={14} />
           </button>
         </div>
       </div>
@@ -194,7 +248,7 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
               return (
                 <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className={`max-w-[80%] rounded-lg p-2 border ${
+                    className={`max-w-[82%] rounded-lg p-2 border ${
                       mine
                         ? 'bg-sky-600/20 border-sky-500/30 text-sky-100'
                         : 'bg-slate-800 border-slate-700 text-slate-100'
