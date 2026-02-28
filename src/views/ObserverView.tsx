@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, X, Eye, BookOpen, 
-  Database, UserSecret, Monitor, 
+  Database, UserCog, Monitor, 
   Feather, Skull, Users, Globe
 } from 'lucide-react';
 import { User } from '../types';
@@ -289,7 +289,8 @@ export function ObserverView({ user, onExit, showToast, fetchGlobalData }: Props
                         </>
                       ) : (
                         <div className="text-center p-8 border border-green-800 bg-green-900/10">
-                          <UserSecret size={48} className="mx-auto text-green-500 mb-4"/>
+                          {/* 修复：UserSecret 不存在，替换为 UserCog */}
+                          <UserCog size={48} className="mx-auto text-green-500 mb-4"/>
                           <p className="text-green-800 text-xs font-bold mb-2 tracking-[0.2em]">AGENT STATUS: ONLINE</p>
                           <h3 className="text-2xl font-bold text-white mb-2">{user.job}</h3>
                           <p className="text-green-600/70 text-sm mb-8">保持警惕，真理永远在暗处。</p>
