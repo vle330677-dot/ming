@@ -2,8 +2,10 @@ import express from 'express';
 import Database from 'better-sqlite3';
 import dotenv from 'dotenv';
 import path from 'path';
-import fs from 'fs'; // 【修复追加】引入 fs 模块用于创建目录和读取模板
+import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { createRpRouter } from './server/routes/rp.routes.js';
+
 
 dotenv.config();
 
@@ -60,66 +62,84 @@ db.exec(`
     fury INTEGER DEFAULT 0,
     partyId TEXT DEFAULT NULL
   );
-  
+
+  -- ===== RP 会话系统（拆分路由用）=====
   CREATE TABLE IF NOT EXISTS active_rp_sessions (
-      id TEXT PRIMARY KEY,
-      locationId TEXT,
-      locationName TEXT,
-      status TEXT DEFAULT 'active',
-      endProposedBy INTEGER DEFAULT NULL
-    );
+    id TEXT PRIMARY KEY,
+    locationId TEXT,
+    locationName TEXT,
+    status TEXT DEFAULT 'active',
+    endProposedBy INTEGER DEFAULT NULL
+  );
 
-    CREATE TABLE IF NOT EXISTS active_rp_members (
-      sessionId TEXT,
-      userId INTEGER,
-      userName TEXT,
-      role TEXT,
-      PRIMARY KEY(sessionId, userId)
-    );
+  CREATE TABLE IF NOT EXISTS active_rp_members (
+    sessionId TEXT,
+    userId INTEGER,
+    userName TEXT,
+    role TEXT,
+    PRIMARY KEY (sessionId, userId)
+  );
 
-    CREATE TABLE IF NOT EXISTS active_rp_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      sessionId TEXT,
-      senderId INTEGER,
-      senderName TEXT,
-      content TEXT,
-      type TEXT DEFAULT 'text',
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    
+  CREATE TABLE IF NOT EXISTS active_rp_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sessionId TEXT,
+    senderId INTEGER,
+    senderName TEXT,
+    content TEXT,
+    type TEXT DEFAULT 'text',
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS active_rp_leaves (
+    sessionId TEXT,
+    userId INTEGER,
+    leftAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (sessionId, userId)
+  );
+
   CREATE TABLE IF NOT EXISTS player_notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ownerId INTEGER,
-      targetId INTEGER,
-      content TEXT,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(ownerId, targetId)
-    );
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ownerId INTEGER,
+    targetId INTEGER,
+    content TEXT,
+    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(ownerId, targetId)
+  );
 
-    CREATE TABLE IF NOT EXISTS teams (
-      id TEXT PRIMARY KEY,
-      leaderId INTEGER,
-      status TEXT DEFAULT 'active',
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+  CREATE TABLE IF NOT EXISTS teams (
+    id TEXT PRIMARY KEY,
+    leaderId INTEGER,
+    status TEXT DEFAULT 'active',
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 
-    CREATE TABLE IF NOT EXISTS team_members (
-      teamId TEXT,
-      userId INTEGER,
-      status TEXT DEFAULT 'pending',
-      PRIMARY KEY (teamId, userId)
-    );
+  CREATE TABLE IF NOT EXISTS team_members (
+    teamId TEXT,
+    userId INTEGER,
+    status TEXT DEFAULT 'pending',
+    PRIMARY KEY (teamId, userId)
+  );
 
-    CREATE TABLE IF NOT EXISTS rp_archives (
-      id TEXT PRIMARY KEY,
-      title TEXT,
-      locationId TEXT,
-      locationName TEXT,
-      participants TEXT,
-      participantNames TEXT,
-      status TEXT DEFAULT 'active',
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+  CREATE TABLE IF NOT EXISTS rp_archives (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    locationId TEXT,
+    locationName TEXT,
+    participants TEXT,
+    participantNames TEXT,
+    status TEXT DEFAULT 'active',
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS rp_archive_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    archiveId TEXT,
+    senderId INTEGER,
+    senderName TEXT,
+    content TEXT,
+    type TEXT DEFAULT 'text',
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 
   CREATE TABLE IF NOT EXISTS rescue_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,7 +165,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS global_skills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    faction TEXT, 
+    faction TEXT,
     tier TEXT DEFAULT '低阶',
     description TEXT,
     npcId TEXT
@@ -238,17 +258,8 @@ db.exec(`
     status TEXT DEFAULT 'active',
     endsAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
-
-  CREATE TABLE IF NOT EXISTS rp_archive_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    archiveId TEXT,
-    senderId INTEGER,
-    senderName TEXT,
-    content TEXT,
-    type TEXT DEFAULT 'text',
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
 `);
+
 
 // 动态补全字段，添加正则校验防御 SQL 注入
 const addColumn = (table: string, col: string, type: string) => {
@@ -406,6 +417,10 @@ async function startServer() {
   const PORT = process.env.PORT || 3000;
 
   app.use(express.json({ limit: '50mb' }));
+  app.use('/api', createRpRouter(db));
+
+  
+
 
   // ================= 4. 管理员专属 API =================
   app.post('/api/admin/items', (req, res) => {
@@ -440,42 +455,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post('/api/rp/start', (req, res) => {
-    const { initiator, target, locationId, locationName } = req.body;
-    const sessionId = `RP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    
-    db.transaction(() => {
-      db.prepare('INSERT INTO active_rp_sessions (id, locationId, locationName) VALUES (?, ?, ?)')
-        .run(sessionId, locationId, locationName);
-      
-      const insertMember = db.prepare('INSERT INTO active_rp_members (sessionId, userId, userName, role) VALUES (?, ?, ?, ?)');
-      insertMember.run(sessionId, initiator.id, initiator.name, initiator.role);
-      insertMember.run(sessionId, target.id, target.name, target.role);
-      
-      db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type) VALUES (?, ?, ?, ?, ?)')
-        .run(sessionId, 0, '系统', `${initiator.name} 与 ${target.name} 开始了对戏，你们现在处于组队纠缠状态。`, 'system');
-    })();
-    
-    res.json({ success: true, sessionId });
-  });
-
-  app.get('/api/rp/session/:id', (req, res) => {
-    const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
-    if (!session) return res.json({ success: false });
-
-    const members = db.prepare('SELECT * FROM active_rp_members WHERE sessionId = ?').all(req.params.id);
-    const messages = db.prepare('SELECT * FROM active_rp_messages WHERE sessionId = ? ORDER BY createdAt ASC').all(req.params.id);
-    
-    res.json({ success: true, session, members, messages });
-  });
-
-  app.post('/api/rp/session/:id/message', (req, res) => {
-    const { senderId, senderName, content } = req.body;
-    db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content) VALUES (?, ?, ?, ?)')
-      .run(req.params.id, senderId, senderName, content);
-    res.json({ success: true });
-  });
-
   app.post('/api/rp/session/:id/mediate', (req, res) => {
     const { requesterName } = req.body;
     db.prepare("UPDATE active_rp_sessions SET status = 'mediating' WHERE id = ?").run(req.params.id);
@@ -484,38 +463,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post('/api/rp/session/:id/end', (req, res) => {
-    const { userId, archiveTitle } = req.body;
-    const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
-    
-    if (session.endProposedBy && session.endProposedBy !== userId) {
-      const members = db.prepare('SELECT * FROM active_rp_members WHERE sessionId = ?').all(req.params.id);
-      const memberIds = JSON.stringify(members.map((m: any) => m.userId));
-      const memberNames = members.map((m: any) => m.userName).join(', '); 
-      
-      db.transaction(() => {
-        const archiveId = `ARC-${Date.now()}`;
-        db.prepare('INSERT INTO rp_archives (id, title, locationId, locationName, participants, participantNames) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(archiveId, archiveTitle || `${session.locationName}的邂逅`, session.locationId, session.locationName, memberIds, memberNames);
-        
-        db.prepare(`
-          INSERT INTO rp_archive_messages (archiveId, senderId, senderName, content, type, createdAt)
-          SELECT ?, senderId, senderName, content, type, createdAt FROM active_rp_messages WHERE sessionId = ?
-        `).run(archiveId, req.params.id);
-
-        db.prepare('DELETE FROM active_rp_sessions WHERE id = ?').run(req.params.id);
-        db.prepare('DELETE FROM active_rp_members WHERE sessionId = ?').run(req.params.id);
-        db.prepare('DELETE FROM active_rp_messages WHERE sessionId = ?').run(req.params.id);
-      })();
-      return res.json({ success: true, ended: true });
-    } else {
-      db.prepare("UPDATE active_rp_sessions SET status = 'ending', endProposedBy = ? WHERE id = ?").run(userId, req.params.id);
-      db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type) VALUES (?, ?, ?, ?, ?)')
-        .run(req.params.id, 0, '系统', `一方发起了离开并结束对戏的请求，等待另一方确认...`, 'system');
-      return res.json({ success: true, ended: false });
-    }
-  });
-
+  
   app.post('/api/interact/combat', (req, res) => {
     const { attackerId, defenderId, attackerScore, defenderScore } = req.body;
     const isAttackerWin = attackerScore >= defenderScore;
@@ -1324,13 +1272,6 @@ async function startServer() {
     res.json({ success: true, archives });
   });
 
-  app.get('/api/admin/rp_archives', (_req, res) => {
-    const archives = db.prepare('SELECT * FROM rp_archives ORDER BY createdAt DESC').all() as any[];
-    for (let arc of archives) {
-      arc.messages = db.prepare('SELECT * FROM rp_archive_messages WHERE archiveId = ? ORDER BY createdAt ASC').all(arc.id);
-    }
-    res.json({ success: true, archives });
-  });
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
