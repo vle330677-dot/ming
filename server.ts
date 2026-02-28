@@ -49,6 +49,7 @@ db.exec(`
     fury INTEGER DEFAULT 0,
     partyId TEXT DEFAULT NULL
   );
+  
   CREATE TABLE IF NOT EXISTS active_rp_sessions (
       id TEXT PRIMARY KEY,
       locationId TEXT,
@@ -74,6 +75,7 @@ db.exec(`
       type TEXT DEFAULT 'text', -- text, system
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    
   CREATE TABLE IF NOT EXISTS player_notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ownerId INTEGER,
@@ -103,7 +105,9 @@ db.exec(`
       id TEXT PRIMARY KEY,
       title TEXT,
       locationId TEXT,
-      participants TEXT, -- JSON array of user IDs
+      locationName TEXT,      -- 新增：方便直接显示和搜索
+      participants TEXT,      -- JSON array of user IDs
+      participantNames TEXT,  -- 新增：参与者名字集，方便搜索
       status TEXT DEFAULT 'active', -- active, ended
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -133,17 +137,6 @@ db.exec(`
     npcId TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS tombstones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    deathDescription TEXT,
-    role TEXT,
-    mentalRank TEXT,
-    physicalRank TEXT,
-    ability TEXT,
-    spiritName TEXT,
-    isHidden INTEGER DEFAULT 0
-  );
   CREATE TABLE IF NOT EXISTS tombstones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
@@ -232,27 +225,16 @@ db.exec(`
     status TEXT DEFAULT 'active',
     endsAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
-  -- 3. 对戏存档系统 (新增/修改)
-    CREATE TABLE IF NOT EXISTS rp_archives (
-      id TEXT PRIMARY KEY,
-      title TEXT,
-      locationId TEXT,
-      locationName TEXT,      -- 新增：方便直接显示和搜索
-      participants TEXT,      -- JSON array of user IDs
-      participantNames TEXT,  -- 新增：参与者名字集，方便搜索
-      status TEXT DEFAULT 'active',
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
 
-    CREATE TABLE IF NOT EXISTS rp_archive_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      archiveId TEXT,
-      senderId INTEGER,
-      senderName TEXT,
-      content TEXT,
-      type TEXT DEFAULT 'text',
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+  CREATE TABLE IF NOT EXISTS rp_archive_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    archiveId TEXT,
+    senderId INTEGER,
+    senderName TEXT,
+    content TEXT,
+    type TEXT DEFAULT 'text',
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // 动态补全可能缺失的字段 (兼容老数据库)
@@ -427,6 +409,7 @@ async function startServer() {
     `).run(ownerId, targetId, content);
     res.json({ success: true });
   });
+
   // 发起对戏 (建立会话并自动组队)
   app.post('/api/rp/start', (req, res) => {
     const { initiator, target, locationId, locationName } = req.body;
@@ -475,7 +458,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-// 发起结束对戏 / 同意结束并存档
+  // 发起结束对戏 / 同意结束并存档
   app.post('/api/rp/session/:id/end', (req, res) => {
     const { userId, archiveTitle } = req.body;
     const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
@@ -543,6 +526,44 @@ async function startServer() {
     const randomKey = keys[Math.floor(Math.random() * keys.length)];
     res.json({ success: true, probedStat: { key: randomKey, value: target[randomKey] } });
   });
+
+  // --- 补全新增：偷窃功能 ---
+  app.post('/api/interact/steal', (req, res) => {
+    const { attackerId, targetId } = req.body;
+    try {
+      // 找到目标身上的所有物品
+      const targetItems = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND qty > 0').all(targetId) as any[];
+      if (targetItems.length === 0) {
+        return res.json({ success: false, message: '对方穷得叮当响，什么都没偷到。' });
+      }
+      
+      // 随机挑一个
+      const itemToSteal = targetItems[Math.floor(Math.random() * targetItems.length)];
+      
+      const transaction = db.transaction(() => {
+        // 从目标身上扣除
+        if (itemToSteal.qty === 1) {
+          db.prepare('DELETE FROM user_inventory WHERE id = ?').run(itemToSteal.id);
+        } else {
+          db.prepare('UPDATE user_inventory SET qty = qty - 1 WHERE id = ?').run(itemToSteal.id);
+        }
+        
+        // 发给偷窃者
+        const existingInAttacker = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(attackerId, itemToSteal.name) as any;
+        if (existingInAttacker) {
+          db.prepare('UPDATE user_inventory SET qty = qty + 1 WHERE id = ?').run(existingInAttacker.id);
+        } else {
+          db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(attackerId, itemToSteal.name);
+        }
+      });
+      transaction();
+      
+      res.json({ success: true, message: `得手了！你从对方身上顺走了 [${itemToSteal.name}]！` });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
   // --- 狂暴值系统：战斗增加 ---
   app.post('/api/combat/end', (req, res) => {
     const { userId } = req.body;
@@ -704,12 +725,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post('/api/rescue/confirm', (req, res) => {
-    const { patientId } = req.body;
-    db.prepare('UPDATE users SET hp = 20 WHERE id = ?').run(patientId);
-    db.prepare('DELETE FROM rescue_requests WHERE patientId = ?').run(patientId);
-    res.json({ success: true });
-  });
   // 拒绝救援
   app.post('/api/rescue/reject', (req, res) => {
     const { requestId } = req.body;
@@ -1227,6 +1242,7 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
   });
+
   // --- 公墓与留言系统 ---
   app.get('/api/graveyard', (_req, res) => {
     const tombstones = db.prepare('SELECT * FROM tombstones ORDER BY id DESC').all();
@@ -1250,6 +1266,7 @@ async function startServer() {
     db.prepare('DELETE FROM tombstone_comments WHERE id = ? AND userId = ?').run(req.params.commentId, userId);
     res.json({ success: true });
   });
+
   // 获取个人的所有对戏存档
   app.get('/api/users/:id/rp_archives', (req, res) => {
     const userId = req.params.id;

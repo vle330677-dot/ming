@@ -90,6 +90,14 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         const rankMap: Record<string, number> = { 'SSS': 7, 'SS': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2, 'D': 1, '无': 0 };
         const myScore = rankMap[currentUser.mentalRank||'无'] + rankMap[currentUser.physicalRank||'无'];
         const tScore = rankMap[targetUser.mentalRank||'无'] + rankMap[targetUser.physicalRank||'无'];
+        await fetch('/api/combat/end', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ userId: currentUser.id }) });
+    break;
+  case 'soothe': // 【补充抚慰逻辑】
+    await fetch('/api/guide/soothe', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sentinelId: targetUser.id, guideId: currentUser.id })
+    });
+    break;
         await fetch('/api/interact/combat', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ attackerId: currentUser.id, defenderId: targetUser.id, attackerScore: myScore, defenderScore: tScore })
