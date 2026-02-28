@@ -16,18 +16,18 @@ const ROLE_WEIGHTS = [
   { name: "鬼魂", w: 10 }
 ];
 const RANK_WEIGHTS = [
-  { name: "D",   w: 24.5 },
-  { name: "C",   w: 24.5 },
-  { name: "B",   w: 24.5 },
-  { name: "A",   w: 24.5 },
-  { name: "S",   w: 1.2  },
-  { name: "SS",  w: 0.6  },
-  { name: "SSS", w: 0.2  },
+  { name: "D", w: 24.5 },
+  { name: "C", w: 24.5 },
+  { name: "B", w: 24.5 },
+  { name: "A", w: 24.5 },
+  { name: "S", w: 1.2 },
+  { name: "SS", w: 0.6 },
+  { name: "SSS", w: 0.2 },
 ];
 const ABILITIES = ["物理系", "元素系", "精神系", "感知系", "信息系", "治疗系", "强化系", "炼金系"];
 const PLANT_RATE = 0.12;
-const PLANT_SPIRITS = ["玫瑰","茉莉","栀子花","薰衣草","向日葵","雏菊","郁金香","樱花","荷花","桂花","牵牛花","紫藤","常春藤","葡萄藤","凌霄花","薄荷","迷迭香","鼠尾草","铃兰","山茶花","百合","鸢尾","绣球花","丁香","夜来香","蔷薇","木槿","芍药","牡丹","金银花"];
-const ANIMAL_SPIRITS = ["狼","灰狼","北极狼","赤狐","北极狐","豺","鬣狗","虎","东北虎","豹","雪豹","美洲豹","猎豹","猞猁","兔狲","棕熊","黑熊","北极熊","浣熊","獾","水獭","貂","黄鼬","野猪","梅花鹿","麋鹿","驯鹿","羚羊","羊驼","牦牛","野牛","大象","非洲象","河马","犀牛","黑猩猩","大猩猩","猕猴","狒狒","狐猴","白头海雕","金雕","游隼","苍鹰","猫头鹰","雪鸮","乌鸦","渡鸦","喜鹊","天鹅","白鹭","丹顶鹤","火烈鸟","孔雀","蜂鸟","啄木鸟","信天翁","企鹅","海豚","瓶鼻海豚","虎鲸","座头鲸","蓝鲸","抹香鲸","海狮","海豹","海象","大白鲨","锤头鲨","蝠鲼","鳐鱼","旗鱼","金枪鱼","小丑鱼","海马","科莫多巨蜥","变色龙","绿鬣蜥","眼镜蛇","蟒蛇","响尾蛇","海龟","陆龟","鳄鱼","短吻鳄","树蛙","箭毒蛙","蝾螈","火蜥蜴","章鱼","乌贼","鱿鱼","水母","海星","海胆","螳螂","竹节虫","独角仙","锹形虫","蜜蜂","黄蜂","帝王蝶","凤蝶","蜻蜓","狼蛛","蝎子","螃蟹","龙虾"];
+const PLANT_SPIRITS = ["玫瑰", "茉莉", "栀子花", "薰衣草", "向日葵", "雏菊", "郁金香", "樱花", "荷花", "桂花", "牵牛花", "紫藤", "常春藤", "葡萄藤", "凌霄花", "薄荷", "迷迭香", "鼠尾草", "铃兰", "山茶花", "百合", "鸢尾", "绣球花", "丁香", "夜来香", "蔷薇", "木槿", "芍药", "牡丹", "金银花"];
+const ANIMAL_SPIRITS = ["狼", "灰狼", "北极狼", "赤狐", "北极狐", "豺", "鬣狗", "虎", "东北虎", "豹", "雪豹", "美洲豹", "猎豹", "猞猁", "兔狲", "棕熊", "黑熊", "北极熊", "浣熊", "獾", "水獭", "貂", "黄鼬", "野猪", "梅花鹿", "麋鹿", "驯鹿", "羚羊", "羊驼", "牦牛", "野牛", "大象", "非洲象", "河马", "犀牛", "黑猩猩", "大猩猩", "猕猴", "狒狒", "狐猴", "白头海雕", "金雕", "游隼", "苍鹰", "猫头鹰", "雪鸮", "乌鸦", "渡鸦", "喜鹊", "天鹅", "白鹭", "丹顶鹤", "火烈鸟", "孔雀", "蜂鸟", "啄木鸟", "信天翁", "企鹅", "海豚", "瓶鼻海豚", "虎鲸", "座头鲸", "蓝鲸", "抹香鲸", "海狮", "海豹", "海象", "大白鲨", "锤头鲨", "蝠鲼", "鳐鱼", "旗鱼", "金枪鱼", "小丑鱼", "海马", "科莫多巨蜥", "变色龙", "绿鬣蜥", "眼镜蛇", "蟒蛇", "响尾蛇", "海龟", "陆龟", "鳄鱼", "短吻鳄", "树蛙", "箭毒蛙", "蝾螈", "火蜥蜴", "章鱼", "乌贼", "鱿鱼", "水母", "海星", "海胆", "螳螂", "竹节虫", "独角仙", "锹形虫", "蜜蜂", "黄蜂", "帝王蝶", "凤蝶", "蜻蜓", "狼蛛", "蝎子", "螃蟹", "龙虾"];
 
 function weightedPick(items: { name: string, w: number }[]) {
   const total = items.reduce((s, x) => s + x.w, 0);
@@ -39,29 +39,29 @@ const pickFrom = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
 
 function generateData() {
   const role = weightedPick(ROLE_WEIGHTS);
-  
+
   let mentalRank = "—";
   let physicalRank = "—";
   let spirit = { name: "无", type: "无" };
-  
+
   if (role === "哨兵" || role === "向导") {
     mentalRank = weightedPick(RANK_WEIGHTS);
     physicalRank = weightedPick(RANK_WEIGHTS);
-    
+
     const isPlant = Math.random() < PLANT_RATE;
-    spirit = isPlant 
-      ? { name: pickFrom(PLANT_SPIRITS), type: "植物" } 
+    spirit = isPlant
+      ? { name: pickFrom(PLANT_SPIRITS), type: "植物" }
       : { name: pickFrom(ANIMAL_SPIRITS), type: "动物" };
   } else if (role === "普通人") {
-    mentalRank = "无"; 
+    mentalRank = "无";
     physicalRank = weightedPick(RANK_WEIGHTS);
   } else if (role === "鬼魂") {
     mentalRank = weightedPick(RANK_WEIGHTS);
-    physicalRank = "无"; 
+    physicalRank = "无";
   }
 
-  let gold = Math.random() < 0.10 
-    ? Math.floor(Math.random() * (10000 - 8000 + 1)) + 8000 
+  let gold = Math.random() < 0.10
+    ? Math.floor(Math.random() * (10000 - 8000 + 1)) + 8000
     : Math.floor(Math.random() * (7999 - 100 + 1)) + 100;
 
   return {
@@ -86,6 +86,25 @@ export function ExtractorView({ onNavigate, userName }: Props) {
   const [spiritView, setSpiritView] = useState<'question' | 'input'>('question');
   const [loading, setLoading] = useState(false);
 
+  // 核心修复：从临时档案读取真实年龄，避免后端默认18覆盖
+  const [initialAge, setInitialAge] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/users/${encodeURIComponent(userName)}`);
+        const data = await res.json();
+        if (!cancelled && data.success && data.user) {
+          setInitialAge(typeof data.user.age === 'number' ? data.user.age : null);
+        }
+      } catch (e) {
+        console.error('读取初始年龄失败', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userName]);
+
   const drawOnce = () => {
     if (isLocked) return;
     if (drawCount >= MAX_DRAWS) {
@@ -108,9 +127,8 @@ export function ExtractorView({ onNavigate, userName }: Props) {
     setFinalData(data);
     setShowHistoryModal(false);
 
-    if (data.role === "普通人" || data.role === "鬼魂") {
-      executeFinalLock(data);
-    } else {
+    if (data.role === "普通人" || data.role === "鬼魂") executeFinalLock(data);
+    else {
       setSpiritView('question');
       setCustomSpirit('');
       setShowSpiritModal(true);
@@ -148,6 +166,7 @@ export function ExtractorView({ onNavigate, userName }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: userName,
+          age: initialAge ?? undefined, // 关键修复点
           role: data.role,
           mentalRank: data.mentalRank,
           physicalRank: data.physicalRank,
@@ -159,9 +178,7 @@ export function ExtractorView({ onNavigate, userName }: Props) {
       });
       const result = await res.json();
       if (result.success) {
-        setTimeout(() => {
-          onNavigate('PENDING');
-        }, 2000);
+        setTimeout(() => onNavigate('PENDING'), 2000);
       } else {
         alert(result.message || '保存失败');
         setIsLocked(false);
@@ -180,9 +197,9 @@ export function ExtractorView({ onNavigate, userName }: Props) {
         <div className="p-6 bg-white/80 backdrop-blur-md border border-gray-200 rounded-2xl shadow-sm">
           <h1 className="text-2xl font-black mb-2 tracking-wide text-gray-900">哨兵 / 向导 世界观抽取器</h1>
           <p className="text-gray-500 text-sm leading-relaxed">
-            点击抽取：生成 <b>身份</b>、<b>等级(精神/肉体)</b>、<b>初始金币</b>、<b>能力偏好</b> 与 <b>精神体</b>。<br/>
-            <i>* 满 10 次后需从记录中选择 1 个，若为哨/向可决定是否保留精神体，确认后永久锁定。<br/>
-            * 设定：普通人无精神等级，鬼魂无肉体强度，且两者均无精神体。</i>
+            点击抽取：生成 <b>身份</b>、<b>等级(精神/肉体)</b>、<b>初始金币</b>、<b>能力偏好</b> 与 <b>精神体</b>。<br />
+            <i>* 满 10 次后需从记录中选择 1 个，若为哨/向可决定是否保留精神体，确认后永久锁定。<br />
+              * 设定：普通人无精神等级，鬼魂无肉体强度，且两者均无精神体。</i>
           </p>
         </div>
 
@@ -227,7 +244,6 @@ export function ExtractorView({ onNavigate, userName }: Props) {
         </div>
       </div>
 
-      {/* History Modal */}
       <AnimatePresence>
         {showHistoryModal && (
           <motion.div
@@ -263,7 +279,6 @@ export function ExtractorView({ onNavigate, userName }: Props) {
         )}
       </AnimatePresence>
 
-      {/* Spirit Modal */}
       <AnimatePresence>
         {showSpiritModal && (
           <motion.div
@@ -281,7 +296,7 @@ export function ExtractorView({ onNavigate, userName }: Props) {
                 <div>
                   <h2 className="text-xl font-black mb-4">精神体确认</h2>
                   <p className="text-base mb-6 text-gray-700">
-                    您是否喜欢您现在的精神体：<br/>
+                    您是否喜欢您现在的精神体：<br />
                     <strong className="text-sky-700 text-2xl inline-block mt-2">{finalData?.spirit?.name}</strong> ？
                   </p>
                   <div className="flex gap-4 justify-center">
@@ -309,7 +324,6 @@ export function ExtractorView({ onNavigate, userName }: Props) {
         )}
       </AnimatePresence>
 
-      {/* Loading Overlay */}
       {loading && (
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[100] flex items-center justify-center">
           <div className="text-center">
