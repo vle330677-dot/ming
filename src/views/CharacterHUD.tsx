@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { User } from '../types';
 import { 
   ChevronRight, ChevronLeft, User as UserIcon, Zap, Heart, 
-  Activity, Shield, Briefcase, Award, Skull, BookOpen, Trash2, ArrowUpCircle
+  Activity, Shield, Briefcase, Award, Skull, BookOpen, Trash2, ArrowUpCircle, Package
 } from 'lucide-react';
 
 interface Props {
@@ -15,6 +15,7 @@ export function CharacterHUD({ user, onLogout }: Props) {
   // 默认展开
   const [isExpanded, setIsExpanded] = useState(true);
   const [skills, setSkills] = useState<any[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]); // 新增背包状态
   const containerRef = useRef(null);
 
   // 定期拉取技能或依靠事件触发更新
@@ -28,9 +29,24 @@ export function CharacterHUD({ user, onLogout }: Props) {
     }
   };
 
+  // 新增：拉取背包数据
+  const fetchInventory = async () => {
+    try {
+      const res = await fetch(`/api/users/${user.id}/inventory`);
+      const data = await res.json();
+      if (data.success) setInventory(data.items);
+    } catch (e) {
+      console.error("拉取背包失败", e);
+    }
+  };
+
   useEffect(() => {
     fetchSkills();
-    const timer = setInterval(fetchSkills, 10000); // 每10秒自动刷新一次状态
+    fetchInventory();
+    const timer = setInterval(() => {
+      fetchSkills();
+      fetchInventory();
+    }, 10000); // 每10秒自动刷新一次状态
     return () => clearInterval(timer);
   }, [user.id]);
 
@@ -56,6 +72,25 @@ export function CharacterHUD({ user, onLogout }: Props) {
     try {
       await fetch(`/api/users/${user.id}/skills/${skillId}`, { method: 'DELETE' });
       fetchSkills();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // 新增：使用/兑换物品
+  const handleUseItem = async (inventoryId: number) => {
+    try {
+      const res = await fetch('/api/inventory/use', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, inventoryId })
+      });
+      const data = await res.json();
+      alert(data.message);
+      if (data.success) {
+        fetchInventory(); // 刷新背包
+        fetchSkills(); // 如果是技能书，刷新技能列表
+      }
     } catch (e) {
       console.error(e);
     }
@@ -87,7 +122,7 @@ export function CharacterHUD({ user, onLogout }: Props) {
               initial={{ opacity: 0, scale: 0.9, width: 60 }}
               animate={{ opacity: 1, scale: 1, width: 280 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+              className="bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
             >
               {/* 头部：拖拽手柄 + 简略信息 */}
               <div className="p-4 bg-slate-800/50 border-b border-slate-700 cursor-move flex items-center justify-between group">
@@ -115,7 +150,7 @@ export function CharacterHUD({ user, onLogout }: Props) {
               </div>
 
               {/* 详细数据区 */}
-              <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
                 {/* 核心三维 */}
                 <div className="space-y-2">
                   <StatBar icon={<Heart size={10} />} label="HP" current={user.hp || 100} max={user.maxHp || 100} color="bg-rose-500" />
@@ -130,7 +165,7 @@ export function CharacterHUD({ user, onLogout }: Props) {
                   <InfoBox icon={<Award size={12}/>} label="肉体" value={user.physicalRank || '-'} highlight />
                 </div>
 
-                {/* ================= 新增：技能面板 ================= */}
+                {/* 技能面板 */}
                 <div className="pt-4 border-t border-slate-700/50">
                   <div className="text-[10px] text-slate-400 uppercase font-black flex justify-between items-center mb-2">
                     <span className="flex items-center gap-1"><BookOpen size={12} /> 已习得派系技能</span>
@@ -166,12 +201,55 @@ export function CharacterHUD({ user, onLogout }: Props) {
                     </div>
                   )}
                 </div>
+
+                {/* ================= 新增：背包面板 ================= */}
+                <div className="pt-4 border-t border-slate-700/50">
+                  <div className="text-[10px] text-slate-400 uppercase font-black flex justify-between items-center mb-2">
+                    <span className="flex items-center gap-1"><Package size={12} /> 我的背包</span>
+                  </div>
+                  {inventory.length === 0 ? (
+                    <div className="text-[10px] text-slate-500 text-center py-2 italic border border-slate-800 rounded-lg">背包空空如也</div>
+                  ) : (
+                    <div className="space-y-2 pr-1">
+                      {inventory.map(inv => (
+                        <div key={inv.id} className="bg-slate-800/80 border border-slate-700 rounded-lg p-2 flex flex-col gap-2">
+                          <div className="flex justify-between items-start">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-amber-100">{inv.name}</span>
+                              <span className="text-[9px] text-slate-400 mt-0.5">拥有: x{inv.qty}</span>
+                            </div>
+                            <span className="text-[9px] px-1.5 py-0.5 bg-slate-700 border border-slate-600 text-slate-300 rounded font-black tracking-widest">{inv.itemType || '未知'}</span>
+                          </div>
+                          
+                          {/* 根据不同类型的物品渲染对应颜色的操作按钮 */}
+                          <div className="flex justify-end">
+                            {inv.itemType === '回复道具' && (
+                              <button onClick={() => handleUseItem(inv.id)} className="px-3 py-1 bg-emerald-600/20 text-emerald-400 border border-emerald-500/50 text-[10px] font-black rounded hover:bg-emerald-600 hover:text-white transition-colors">使用恢复</button>
+                            )}
+                            {inv.itemType === '技能书道具' && (
+                              <button onClick={() => handleUseItem(inv.id)} className="px-3 py-1 bg-sky-600/20 text-sky-400 border border-sky-500/50 text-[10px] font-black rounded hover:bg-sky-600 hover:text-white transition-colors">研读领悟</button>
+                            )}
+                            {inv.itemType === '贵重物品' && (
+                              <button onClick={() => handleUseItem(inv.id)} className="px-3 py-1 bg-amber-600/20 text-amber-400 border border-amber-500/50 text-[10px] font-black rounded hover:bg-amber-600 hover:text-white transition-colors">出售换金</button>
+                            )}
+                            {inv.itemType === '任务道具' && (
+                              <span className="text-[9px] text-slate-500 italic">仅限委托任务提交</span>
+                            )}
+                            {!inv.itemType && (
+                              <span className="text-[9px] text-slate-500 italic">无法使用</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {/* ================================================= */}
 
                 <div className="pt-2 border-t border-slate-700">
                   <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
                     <span>资产</span>
-                    <span className="text-amber-400 font-mono font-bold">{user.gold} G</span>
+                    <span className="text-amber-400 font-mono font-black text-sm">{user.gold} G</span>
                   </div>
                 </div>
                 

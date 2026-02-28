@@ -80,6 +80,7 @@ export function LoginView({ onNavigate, setUserName, setUser }: Props) {
       setError('安全锁密码错误！');
     }
   };
+  
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">

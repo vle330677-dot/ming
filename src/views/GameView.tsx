@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, MapPin } from 'lucide-react';
-import { X, MapPin, Settings, Skull, Cross, Send, Trash2 } from 'lucide-react';
+import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart } from 'lucide-react';
 import { User } from '../types';
-import { PlayerInteractionUI } from './PlayerInteractionUI';
-
 
 // ================== 组件导入 ==================
-// 1. 导入新的悬浮角色状态栏 (请确保 CharacterHUD.tsx 已创建)
+import { PlayerInteractionUI } from './PlayerInteractionUI';
 import { CharacterHUD } from './CharacterHUD';
+import { RoleplayWindow } from './RoleplayWindow'; // 确保导入对戏窗口
 
-// 2. 导入所有子地图视图
 import { TowerOfLifeView } from './TowerOfLifeView';
 import { LondonTowerView } from './LondonTowerView';
 import { SanctuaryView } from './SanctuaryView';
@@ -23,28 +20,16 @@ import { SpiritBureauView } from './SpiritBureauView';
 import { ObserverView } from './ObserverView';
 
 // ================== 地图坐标配置 ==================
-// 坐标基于 16:9 比例的地图设定 (百分比 left/top)
 const LOCATIONS = [
-  // 中央核心区
   { id: 'tower_of_life', name: '命之塔', x: 50, y: 48, type: 'safe', description: '世界的绝对中心，神明降下神谕的圣地。新生儿在此接受命运的评定。' },
   { id: 'sanctuary', name: '圣所', x: 42, y: 42, type: 'safe', description: '未分化幼崽的摇篮，充满治愈与宁静的气息。' },
-  
-  // 右侧区域
   { id: 'london_tower', name: '伦敦塔', x: 67, y: 35, type: 'safe', description: '哨兵与向导的最高学府与管理机构。未成年分化者的庇护所。' },
   { id: 'rich_area', name: '富人区', x: 70, y: 50, type: 'danger', description: '流光溢彩的销金窟，权贵们在此挥霍财富。' },
-  
-  // 左侧区域
   { id: 'slums', name: '贫民区', x: 25, y: 48, type: 'danger', description: '混乱、肮脏，但充满生机。这里的市长掌控着地下工厂。' },
   { id: 'demon_society', name: '恶魔会', x: 12, y: 20, type: 'danger', description: '混乱之王的狂欢所，充斥着赌局与危险的交易。(位于未知区域深处)' },
-  
-  // 底部区域
   { id: 'guild', name: '工会', x: 48, y: 78, type: 'danger', description: '鱼龙混杂的地下交易网与冒险者聚集地。' },
-  
-  // 顶部区域
   { id: 'army', name: '军队', x: 50, y: 18, type: 'danger', description: '人类最坚实的物理防线，对抗域外魔物的铁血堡垒。' },
   { id: 'observers', name: '观察者', x: 65, y: 15, type: 'danger', description: '记录世界历史与真相的隐秘结社，掌控着巨大的图书馆。' },
-  
-  // 特殊/边缘
   { id: 'paranormal_office', name: '灵异管理所', x: 88, y: 15, type: 'danger', description: '专门处理非自然精神波动的神秘机关，拥有特殊监狱。(位于未知区域)' },
 ];
 
@@ -63,7 +48,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [localPlayers, setLocalPlayers] = useState<any[]>([]);
   const [interactTarget, setInteractTarget] = useState<any>(null);
   const [activeRPSessionId, setActiveRPSessionId] = useState<string | null>(null);
-  // ... 原有 state
+
   const [showSettings, setShowSettings] = useState(false);
   const [showDeathForm, setShowDeathForm] = useState<'death' | 'ghost' | null>(null);
   const [deathText, setDeathText] = useState('');
@@ -81,7 +66,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
 
   // 监听 HP 变化触发濒死
   useEffect(() => {
-    if (user.hp <= 0 && user.status === 'approved') {
+    if ((user.hp || 0) <= 0 && user.status === 'approved') {
       setIsDying(true);
     } else {
       setIsDying(false);
@@ -92,44 +77,27 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   useEffect(() => {
     if (!isDying || !rescueReqId) return;
     const timer = setInterval(async () => {
-      const res = await fetch(`/api/rescue/check/${user.id}`);
-      const data = await res.json();
-      if (data.outgoing) {
-        if (data.outgoing.status === 'accepted') {
-          await fetch('/api/rescue/confirm', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ patientId: user.id }) });
-          showToast('一位医疗向导将你从死亡边缘拉了回来！');
-          setIsDying(false);
-          setRescueReqId(null);
-          fetchGlobalData();
-        } else if (data.outgoing.status === 'rejected') {
-          showToast('你的求救被拒绝了，生机断绝...');
-          setRescueReqId(null);
+      try {
+        const res = await fetch(`/api/rescue/check/${user.id}`);
+        const data = await res.json();
+        if (data.outgoing) {
+          if (data.outgoing.status === 'accepted') {
+            await fetch('/api/rescue/confirm', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ patientId: user.id }) });
+            showToast('一位医疗向导将你从死亡边缘拉了回来！');
+            setIsDying(false);
+            setRescueReqId(null);
+            fetchGlobalData();
+          } else if (data.outgoing.status === 'rejected') {
+            showToast('你的求救被拒绝了，生机断绝...');
+            setRescueReqId(null);
+          }
         }
+      } catch (e) {
+        console.error(e);
       }
     }, 3000);
     return () => clearInterval(timer);
   }, [isDying, rescueReqId, user.id]);
-
-  // 基础逻辑：年龄判断
-  const userAge = user?.age || 0;
-  const isUndifferentiated = userAge < 16;
-  const isStudentAge = userAge >= 16 && userAge <= 19;
-
-  const handleStartRP = async (target: User) => {
-  const res = await fetch('/api/rp/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      initiator: user, 
-      target: target, 
-      locationId: user.currentLocation, 
-      locationName: selectedLocation?.name || '未知区域' 
-    })
-  });
-  const data = await res.json();
-  if (data.success) {
-    setActiveRPSessionId(data.sessionId);
-  }
-};
 
   // 轮询同地图玩家
   useEffect(() => {
@@ -146,11 +114,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     return () => clearInterval(timer);
   }, [user.currentLocation, user.id]);
 
-  // 地点交互逻辑
-  const handleLocationAction = async (action: 'enter' | 'explore' | 'stay') => {
+  // 基础逻辑：年龄判断
+  const userAge = user?.age || 0;
+  const isUndifferentiated = userAge < 16;
+  const isStudentAge = userAge >= 16 && userAge <= 19;
+
+  // 地点交互逻辑：进入与驻足
+  const handleLocationAction = async (action: 'enter' | 'stay') => {
     if (!selectedLocation) return;
 
-    // 1. 未分化者限制
     if (isUndifferentiated && !SAFE_ZONES.includes(selectedLocation.id)) {
       if (action === 'enter') {
         showToast("【驱逐】这里太危险了，守卫拒绝了你的进入：“未分化的小鬼，回塔里去！”");
@@ -160,7 +132,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       if (!headStrong) return;
     }
 
-    // 2. 16-19岁限制
     if (isStudentAge && action === 'enter' && !SAFE_ZONES.includes(selectedLocation.id)) {
       const choice = window.confirm("你还没有毕业，真的要加入其他阵营吗？\n【取消】去伦敦塔深造 (推荐)\n【确定】强行加入 (仅能获得最低职位)");
       if (!choice) {
@@ -186,10 +157,112 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     }
   };
 
-  // 如果有激活的子视图，全屏显示子视图
+  // 探索领悟技能
+  const handleExploreSkill = async () => {
+    if (!selectedLocation) return;
+    try {
+      const res = await fetch('/api/explore/skill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, locationId: selectedLocation.id })
+      });
+      const data = await res.json();
+      showToast(data.success ? `🎉 ${data.message}` : `⚠️ ${data.message}`);
+    } catch (e) {
+      showToast("探索技能时发生了未知错误！");
+    }
+  };
+
+  // 探索搜刮物资
+  const handleExploreItem = async () => {
+    if (!selectedLocation) return;
+    try {
+      const res = await fetch('/api/explore/item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, locationId: selectedLocation.id })
+      });
+      const data = await res.json();
+      showToast(data.success ? `🎉 ${data.message}` : `⚠️ ${data.message}`);
+    } catch (e) {
+      showToast("搜索物资时发生了错误！");
+    }
+  };
+
+  // 濒死挣扎
+  const handleStruggle = async () => {
+    try {
+      const res = await fetch('/api/rescue/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patientId: user.id, healerId: 0 }) // 0代表发给全区的系统广播
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRescueReqId(Date.now()); 
+        showToast('求救信号已发出，正在等待区域内向导的响应...');
+      }
+    } catch (e) { showToast('求救发送失败'); }
+  };
+
+  // 提交死亡/化鬼谢幕
+  const handleSubmitDeath = async () => {
+    if (!deathText.trim()) return showToast('必须填写谢幕词');
+    await fetch(`/api/users/${user.id}/submit-death`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: showDeathForm === 'death' ? 'pending_death' : 'pending_ghost', text: deathText })
+    });
+    showToast('申请已提交，等待塔区高层审核...');
+    setShowDeathForm(null);
+    fetchGlobalData();
+  };
+
+  // 公墓系列操作
+  const fetchGraveyard = async () => {
+    const res = await fetch('/api/graveyard');
+    const data = await res.json();
+    if (data.success) {
+      setTombstones(data.tombstones);
+      setShowGraveyard(true);
+    }
+  };
+
+  const loadComments = async (tombstoneId: number) => {
+    if (expandedTombstone === tombstoneId) {
+      setExpandedTombstone(null);
+      return;
+    }
+    const res = await fetch(`/api/graveyard/${tombstoneId}/comments`);
+    const data = await res.json();
+    if (data.success) {
+      setComments(data.comments);
+      setExpandedTombstone(tombstoneId);
+    }
+  };
+
+  const addComment = async (tombstoneId: number) => {
+    if(!newComment.trim()) return;
+    await fetch(`/api/graveyard/${tombstoneId}/comments`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ userId: user.id, userName: user.name, content: newComment })
+    });
+    setNewComment('');
+    loadComments(tombstoneId);
+  };
+
+  const deleteComment = async (commentId: number, tombstoneId: number) => {
+    await fetch(`/api/graveyard/comments/${commentId}`, {
+      method: 'DELETE', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ userId: user.id })
+    });
+    loadComments(tombstoneId);
+  };
+
+
+  // 子视图全屏接管
   if (activeView) {
     const commonProps = { user, onExit: () => setActiveView(null), showToast, fetchGlobalData };
-    
     switch (activeView) {
       case 'tower_of_life': return <TowerOfLifeView {...commonProps} />;
       case 'london_tower': return <LondonTowerView {...commonProps} />;
@@ -211,15 +284,10 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       {/* 1. 悬浮角色面板 (HUD) */}
       <CharacterHUD user={user} onLogout={onLogout} />
 
-      {/* 2. 响应式地图容器 
-          aspect-video 强制 16:9 比例。
-          max-w-[177.78vh] 确保在超宽屏下高度不超过视口，保持比例不裁剪。
-          pointer-events-auto 确保内部元素可点击。
-      */}
+      {/* 2. 响应式地图容器 */}
       <div className="relative w-full h-full flex items-center justify-center p-0 md:p-4">
         <div className="relative aspect-video w-full max-w-[177.78vh] max-h-full shadow-2xl overflow-hidden rounded-xl bg-slate-900 border border-slate-800">
           
-          {/* 背景图片 */}
           <img 
             src="/map_background.jpg" 
             className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-80" 
@@ -235,12 +303,10 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                 style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
                 onClick={() => setSelectedLocation(loc)}
               >
-                {/* 选中时的光圈 */}
                 {user.currentLocation === loc.id && (
                   <div className="absolute -inset-6 bg-sky-500/20 rounded-full animate-ping pointer-events-none"></div>
                 )}
                 
-                {/* 标记点 */}
                 <div className={`relative w-4 h-4 md:w-6 md:h-6 rounded-full border-2 shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all duration-300 flex items-center justify-center
                   ${user.currentLocation === loc.id 
                     ? 'bg-sky-500 border-white scale-110 shadow-sky-500/50' 
@@ -250,7 +316,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                   {user.currentLocation === loc.id && <MapPin size={10} className="text-white" />}
                 </div>
 
-                {/* 悬浮/选中时的地名标签 */}
                 <div className={`absolute top-6 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] md:text-xs font-bold text-white transition-opacity duration-200
                   ${selectedLocation?.id === loc.id ? 'opacity-100 z-20' : 'opacity-0 group-hover:opacity-100'}
                 `}>
@@ -287,7 +352,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </div>
       </div>
 
-      {/* 4. 地点详情弹窗 (底部) */}
+      {/* 4. 地点详情弹窗 (底部带探索功能) */}
       <AnimatePresence>
         {selectedLocation && (
           <motion.div 
@@ -323,6 +388,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                     在此驻足
                   </button>
                 </div>
+                {/* 搜刮掉落按钮 */}
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button onClick={handleExploreSkill} className="w-full px-4 py-3 bg-indigo-600/20 text-indigo-400 border border-indigo-500/50 font-black rounded-xl text-[10px] hover:bg-indigo-600 hover:text-white transition-colors">
+                    🧠 领悟派系技能
+                  </button>
+                  <button onClick={handleExploreItem} className="w-full px-4 py-3 bg-amber-600/20 text-amber-400 border border-amber-500/50 font-black rounded-xl text-[10px] hover:bg-amber-600 hover:text-white transition-colors">
+                    📦 搜索区域物资
+                  </button>
+                </div>
               </div>
               <button 
                 onClick={() => setSelectedLocation(null)}
@@ -335,8 +409,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* 5. 玩家互动弹窗 (居中) */}
-      {/* 5. 玩家互动弹窗 (全新的环绕面板) */}
+      {/* 5. 玩家互动弹窗 */}
       <AnimatePresence>
         {interactTarget && (
           <PlayerInteractionUI 
@@ -345,14 +418,13 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             onClose={() => setInteractTarget(null)}
             showToast={showToast}
             onStartRP={(target) => {
-              // 暂时用 Toast 代替，我们下一步再做对戏/群聊窗口的 UI
               showToast(`正在与 ${target.name} 建立精神连接...`);
-              // 这里将设置状态唤出对戏组件： setChatTarget(target);
             }}
           />
         )}
       </AnimatePresence>
-    {/* --- 新增：强制挂起锁屏 --- */}
+
+      {/* --- 新增：强制挂起锁屏 --- */}
       {(user.status === 'pending_death' || user.status === 'pending_ghost') && (
         <div className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md">
           <Skull size={64} className="text-slate-600 mb-6 animate-pulse" />
@@ -397,7 +469,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* --- 新增：右下角齿轮菜单 --- */}
+      {/* --- 右下角齿轮菜单 --- */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
         <button onClick={fetchGraveyard} className="p-3.5 bg-slate-900/80 backdrop-blur border border-slate-700 text-slate-300 rounded-full hover:text-white hover:bg-slate-800 hover:border-slate-500 transition-all shadow-lg group relative">
           <Cross size={20} />
@@ -409,7 +481,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </button>
       </div>
 
-      {/* --- 新增：设置菜单与谢幕表单 --- */}
+      {/* --- 设置菜单与谢幕表单 --- */}
       <AnimatePresence>
         {showSettings && !showDeathForm && (
           <motion.div 
@@ -452,7 +524,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* --- 新增：世界公墓系统 --- */}
+      {/* --- 世界公墓系统 --- */}
       <AnimatePresence>
         {showGraveyard && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
@@ -526,14 +598,14 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
       <AnimatePresence>
-  {activeRPSessionId && (
-    <RoleplayWindow 
-      sessionId={activeRPSessionId} 
-      currentUser={user} 
-      onClose={() => setActiveRPSessionId(null)} 
-    />
-  )}
-</AnimatePresence>
+        {activeRPSessionId && (
+          <RoleplayWindow 
+            sessionId={activeRPSessionId} 
+            currentUser={user} 
+            onClose={() => setActiveRPSessionId(null)} 
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

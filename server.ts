@@ -54,8 +54,8 @@ db.exec(`
       id TEXT PRIMARY KEY,
       locationId TEXT,
       locationName TEXT,
-      status TEXT DEFAULT 'active', -- active, ending, mediating (评理中)
-      endProposedBy INTEGER DEFAULT NULL -- 记录谁发起了结束请求
+      status TEXT DEFAULT 'active',
+      endProposedBy INTEGER DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS active_rp_members (
@@ -72,7 +72,7 @@ db.exec(`
       senderId INTEGER,
       senderName TEXT,
       content TEXT,
-      type TEXT DEFAULT 'text', -- text, system
+      type TEXT DEFAULT 'text',
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     
@@ -85,30 +85,28 @@ db.exec(`
       UNIQUE(ownerId, targetId)
     );
 
-    -- 2. 组队与纠缠系统
     CREATE TABLE IF NOT EXISTS teams (
       id TEXT PRIMARY KEY,
       leaderId INTEGER,
-      status TEXT DEFAULT 'active', -- active, disbanding
+      status TEXT DEFAULT 'active',
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS team_members (
       teamId TEXT,
       userId INTEGER,
-      status TEXT DEFAULT 'pending', -- pending, accepted, entangled (纠缠中)
+      status TEXT DEFAULT 'pending',
       PRIMARY KEY (teamId, userId)
     );
 
-    -- 3. 对戏存档系统
     CREATE TABLE IF NOT EXISTS rp_archives (
       id TEXT PRIMARY KEY,
       title TEXT,
       locationId TEXT,
-      locationName TEXT,      -- 新增：方便直接显示和搜索
-      participants TEXT,      -- JSON array of user IDs
-      participantNames TEXT,  -- 新增：参与者名字集，方便搜索
-      status TEXT DEFAULT 'active', -- active, ended
+      locationName TEXT,
+      participants TEXT,
+      participantNames TEXT,
+      status TEXT DEFAULT 'active',
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -120,20 +118,25 @@ db.exec(`
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  -- 核心修改：物品表新增了阵营、阶级、种类和效果值
   CREATE TABLE IF NOT EXISTS global_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
     locationTag TEXT,
     npcId TEXT,
-    price INTEGER DEFAULT 0
+    price INTEGER DEFAULT 0,
+    faction TEXT DEFAULT '通用',
+    tier TEXT DEFAULT '低阶',
+    itemType TEXT DEFAULT '回复道具',
+    effectValue INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS global_skills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     faction TEXT, 
-    tier TEXT DEFAULT '低阶', -- 新增：低阶、中阶、高阶
+    tier TEXT DEFAULT '低阶',
     description TEXT,
     npcId TEXT
   );
@@ -141,7 +144,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS tombstones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
-    deathDescription TEXT, -- 这里的文本将作为 墓志铭/谢幕戏
+    deathDescription TEXT,
     role TEXT,
     mentalRank TEXT,
     physicalRank TEXT,
@@ -150,7 +153,6 @@ db.exec(`
     isHidden INTEGER DEFAULT 0
   );
 
-  -- 新增：墓碑留言表
   CREATE TABLE IF NOT EXISTS tombstone_comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tombstoneId INTEGER,
@@ -281,6 +283,12 @@ addColumn('global_skills', 'npcId', 'TEXT');
 addColumn('rp_archives', 'locationName', 'TEXT');
 addColumn('rp_archives', 'participantNames', 'TEXT');
 
+// 为物品表新增字段保护
+addColumn('global_items', 'faction', "TEXT DEFAULT '通用'");
+addColumn('global_items', 'tier', "TEXT DEFAULT '低阶'");
+addColumn('global_items', 'itemType', "TEXT DEFAULT '回复道具'");
+addColumn('global_items', 'effectValue', "INTEGER DEFAULT 0");
+
 // ================= 2. 初始数据种子 =================
 const seedData = () => {
   const initialSkills = [
@@ -312,7 +320,7 @@ seedData();
 
 // ================= 3. 辅助配置 =================
 
-// 地点与掉落派系的映射 (用于探索掉落技能)
+// 地点与掉落派系的映射 (用于探索掉落技能/物品)
 const LOCATION_FACTION_MAP: Record<string, string> = {
   'tower_of_life': '精神系',
   'london_tower': '元素系',
@@ -395,9 +403,11 @@ async function startServer() {
 
   // ================= 4. 管理员专属 API =================
   app.post('/api/admin/items', (req, res) => {
-    const { name, description, locationTag, npcId, price } = req.body;
-    db.prepare('INSERT INTO global_items (name, description, locationTag, npcId, price) VALUES (?, ?, ?, ?, ?)')
-      .run(name, description, locationTag, npcId || null, price);
+    const { name, description, locationTag, npcId, price, faction, tier, itemType, effectValue } = req.body;
+    db.prepare(`
+      INSERT INTO global_items (name, description, locationTag, npcId, price, faction, tier, itemType, effectValue) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, description, locationTag, npcId || null, price, faction || '通用', tier || '低阶', itemType || '回复道具', effectValue || 0);
     res.json({ success: true });
   });
 
@@ -651,6 +661,84 @@ async function startServer() {
             db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(userId, bookName);
         }
         res.json({ success: true, message: `你探索到了一本【${bookName}】！由于派系不符无法直接学习，已放入背包（可交易/出售）。`, type: 'book' });
+    }
+  });
+
+  // --- 新增：大地图探索寻找物资 ---
+  app.post('/api/explore/item', (req, res) => {
+    const { userId, locationId } = req.body;
+    const targetFaction = LOCATION_FACTION_MAP[locationId] || '通用';
+
+    // 随机阶级掉落率：60%低阶，30%中阶，10%高阶
+    const roll = Math.random() * 100;
+    let targetTier = '低阶';
+    if (roll > 60 && roll <= 90) targetTier = '中阶';
+    else if (roll > 90) targetTier = '高阶';
+
+    let items = db.prepare('SELECT * FROM global_items WHERE faction = ? AND tier = ?').all(targetFaction, targetTier) as any[];
+    if (items.length === 0) items = db.prepare('SELECT * FROM global_items WHERE faction = ?').all(targetFaction) as any[];
+    if (items.length === 0) items = db.prepare('SELECT * FROM global_items').all() as any[];
+
+    if (items.length === 0) return res.json({ success: false, message: '该区域物资匮乏，什么都没找到。' });
+
+    const randomItem = items[Math.floor(Math.random() * items.length)];
+
+    const existing = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(userId, randomItem.name) as any;
+    if (existing) {
+      db.prepare('UPDATE user_inventory SET qty = qty + 1 WHERE id = ?').run(existing.id);
+    } else {
+      db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(userId, randomItem.name);
+    }
+
+    res.json({ success: true, message: `你搜索了一番，发现了 [${randomItem.tier}] ${randomItem.name}！` });
+  });
+
+  // --- 新增：背包物品使用系统 ---
+  app.post('/api/inventory/use', (req, res) => {
+    const { userId, inventoryId } = req.body;
+
+    try {
+      const invItem = db.prepare('SELECT * FROM user_inventory WHERE id = ? AND userId = ?').get(inventoryId, userId) as any;
+      if (!invItem || invItem.qty < 1) return res.json({ success: false, message: '物品不存在或数量不足。' });
+
+      // 根据名字去全局匹配属性
+      const globalItem = db.prepare('SELECT * FROM global_items WHERE name = ?').get(invItem.name) as any;
+      
+      let resultMessage = '';
+
+      if (!globalItem) {
+        // 可能是自动转化的技能书
+        if (invItem.name.startsWith('[技能书]')) {
+           return res.json({ success: false, message: '非本派系的技能书，请寻找他人交易，无法直接使用。' });
+        }
+        return res.json({ success: false, message: '该物品已绝版，无法使用。' });
+      }
+
+      // 种类判断处理
+      if (globalItem.itemType === '回复道具') {
+        const heal = globalItem.effectValue || 20;
+        db.prepare('UPDATE users SET hp = MIN(maxHp, hp + ?), mp = MIN(maxMp, mp + ?), fury = MAX(0, fury - ?) WHERE id = ?').run(heal, heal, heal, userId);
+        resultMessage = `你使用了 ${invItem.name}，状态得到了恢复！(效果: ${heal})`;
+      } else if (globalItem.itemType === '技能书道具') {
+        const hasSkill = db.prepare('SELECT * FROM user_skills WHERE userId = ? AND name = ?').get(userId, invItem.name) as any;
+        if (hasSkill) return res.json({ success: false, message: '你已经学会了这个技能，无需重复领悟。' });
+        db.prepare('INSERT INTO user_skills (userId, name, level) VALUES (?, ?, 1)').run(userId, invItem.name);
+        resultMessage = `你研读了 ${invItem.name}，学会了新技能！`;
+      } else if (globalItem.itemType === '贵重物品') {
+        const goldGained = globalItem.effectValue || globalItem.price || 100;
+        db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldGained, userId);
+        resultMessage = `你将 ${invItem.name} 兑换成了 ${goldGained} 金币！`;
+      } else if (globalItem.itemType === '任务道具') {
+        return res.json({ success: false, message: '这是任务道具，只能用于提交委托。' });
+      }
+
+      // 扣除物品
+      if (invItem.qty === 1) db.prepare('DELETE FROM user_inventory WHERE id = ?').run(invItem.id);
+      else db.prepare('UPDATE user_inventory SET qty = qty - 1 WHERE id = ?').run(invItem.id);
+
+      res.json({ success: true, message: resultMessage });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
     }
   });
 
@@ -963,8 +1051,14 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // --- 增强查询：将用户背包和全局物品属性联表查询 ---
   app.get('/api/users/:id/inventory', (req, res) => {
-    const items = db.prepare('SELECT * FROM user_inventory WHERE userId = ?').all(req.params.id);
+    const items = db.prepare(`
+      SELECT ui.*, gi.itemType, gi.effectValue, gi.description, gi.tier 
+      FROM user_inventory ui 
+      LEFT JOIN global_items gi ON ui.name = gi.name 
+      WHERE ui.userId = ?
+    `).all(req.params.id);
     res.json({ success: true, items });
   });
 
@@ -1135,7 +1229,7 @@ async function startServer() {
 
       const currentCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE job = ?').get(finalJob) as any;
       if (currentCount.count >= (JOB_LIMITS[finalJob] || 0)) {
-        return res.json({ success: false, message: '该职位名额已满。' });
+        return res.json({ success: false, message: '该职位名额满。' });
       }
 
       db.prepare('UPDATE users SET job = ? WHERE id = ?').run(finalJob, userId);
