@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { createRpRouter } from './server/routes/rp.routes';
+import { createRpRouter } from './server/rp.routes';
 
 
 dotenv.config();
