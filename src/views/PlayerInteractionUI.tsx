@@ -86,21 +86,28 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
     }
 
     switch(actionType) {
-      case 'combat':
+      case 'combat': {
         const rankMap: Record<string, number> = { 'SSS': 7, 'SS': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2, 'D': 1, '无': 0 };
         const myScore = rankMap[currentUser.mentalRank||'无'] + rankMap[currentUser.physicalRank||'无'];
         const tScore = rankMap[targetUser.mentalRank||'无'] + rankMap[targetUser.physicalRank||'无'];
-        await fetch('/api/combat/end', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ userId: currentUser.id }) });
-    break;
-  case 'soothe': // 【补充抚慰逻辑】
-    await fetch('/api/guide/soothe', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ sentinelId: targetUser.id, guideId: currentUser.id })
-    });
-    break;
+        
+        // 1. 结算胜负扣血 (修复了原代码中被隔断在外的 Dead Code)
         await fetch('/api/interact/combat', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ attackerId: currentUser.id, defenderId: targetUser.id, attackerScore: myScore, defenderScore: tScore })
+        });
+        
+        // 2. 增加狂暴值
+        await fetch('/api/combat/end', { 
+          method: 'POST', headers: {'Content-Type': 'application/json'}, 
+          body: JSON.stringify({ userId: currentUser.id }) 
+        });
+        break;
+      }
+      case 'soothe': 
+        await fetch('/api/guide/soothe', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ sentinelId: targetUser.id, guideId: currentUser.id })
         });
         break;
       case 'prank':
@@ -180,7 +187,7 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
           {/* 右上：组队 */}
           <ActionButton onClick={() => showToast('已发送组队/纠缠请求')} icon={<Users/>} label="组队纠缠" cls="top-12 right-12" color="bg-indigo-600 hover:bg-indigo-500" />
           
-          {/* 左：偷窃 (此处需结合用户技能库判断，简写) */}
+          {/* 左：偷窃 */}
           <ActionButton onClick={() => handleAction('steal')} icon={<HandMetal/>} label="暗中偷窃" cls="top-1/2 left-0 -translate-y-1/2" color="bg-slate-700 hover:bg-slate-600" />
           
           {/* 右：小本本 */}
