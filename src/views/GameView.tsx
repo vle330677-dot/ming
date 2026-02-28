@@ -4,7 +4,7 @@ import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart, ArrowLeft, User
 import { User } from '../types';
 
 // ================== 组件导入 ==================
-import { PlayerInteractionUI, RPStartResult } from './PlayerInteractionUI';
+import { PlayerInteractionUI } from './PlayerInteractionUI';
 import { CharacterHUD } from './CharacterHUD';
 import { RoleplayWindow } from './RoleplayWindow';
 
@@ -56,7 +56,6 @@ interface Props {
   fetchGlobalData: () => void;
 }
 
-// ============ 工具：哈希 ============
 function hashNum(input: string | number) {
   const s = String(input);
   let h = 0;
@@ -64,30 +63,10 @@ function hashNum(input: string | number) {
   return Math.abs(h);
 }
 
-// ============ 对戏工具 ============
-function extractSessionId(data: any): string | null {
-  if (!data) return null;
-  const candidates = [
-    data.sessionId,
-    data.activeSessionId,
-    data?.session?.id,
-    data?.id,
-    data?.roomId,
-    data?.rpSessionId,
-    data?.conversationId,
-    data?.channelId
-  ];
-  const found = candidates.find(Boolean);
-  if (found) return String(found);
-
-  if (Array.isArray(data.sessions) && data.sessions[0]?.id) return String(data.sessions[0].id);
-  if (Array.isArray(data.data) && data.data[0]?.id) return String(data.data[0].id);
-
-  return null;
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+function buildPairSessionId(a: number, b: number, locationId: string) {
+  const min = Math.min(a, b);
+  const max = Math.max(a, b);
+  return `rp-${locationId || 'unknown'}-${min}-${max}`;
 }
 
 export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) {
@@ -119,7 +98,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     return '/map_background.jpg';
   }, [activeView]);
 
-  // 实时使用“当前可见地点”，避免 user.currentLocation 刷新延迟
   const effectiveLocationId = activeView || user.currentLocation;
 
   useEffect(() => {
@@ -181,38 +159,25 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     return () => clearInterval(timer);
   }, [effectiveLocationId, user.id]);
 
-  // ===== 被动接收对戏会话（增强兼容）=====
+  // ===== 被动接收对戏会话 =====
   useEffect(() => {
     if (activeRPSessionId) return;
 
     const pollIncoming = async () => {
-      const endpoints = [
-        `/api/rp/session/active/${user.id}`,
-        `/api/rp/active/${user.id}`,
-        `/api/rp/session/by-user/${user.id}`,
-        `/api/rp/sessions/${user.id}`,
-        `/api/rp/session/list/${user.id}`
-      ];
-
-      for (const ep of endpoints) {
-        try {
-          const res = await fetch(ep);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const sid = extractSessionId(data);
-          if ((data?.success ?? true) && sid) {
-            setActiveRPSessionId(String(sid));
-            showToast('收到新的对戏连接，已接入频道');
-            break;
-          }
-        } catch {
-          // ignore
+      try {
+        const res = await fetch(`/api/rp/session/active/${user.id}`);
+        const data = await res.json();
+        if (res.ok && data.success && data.sessionId) {
+          setActiveRPSessionId(String(data.sessionId));
+          showToast('收到新的对戏连接，已接入频道');
         }
+      } catch {
+        // ignore
       }
     };
 
     pollIncoming();
-    const t = setInterval(pollIncoming, 2500);
+    const t = setInterval(pollIncoming, 1500);
     return () => clearInterval(t);
   }, [user.id, activeRPSessionId, showToast]);
 
@@ -220,120 +185,38 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const isUndifferentiated = userAge < 16;
   const isStudentAge = userAge >= 16 && userAge <= 19;
 
-  // ===== 主动发起对戏（修复版）=====
-  const waitSessionFromActiveApis = async (timeoutMs = 6000): Promise<string | null> => {
-    const endpoints = [
-      `/api/rp/session/active/${user.id}`,
-      `/api/rp/active/${user.id}`,
-      `/api/rp/session/by-user/${user.id}`,
-      `/api/rp/sessions/${user.id}`
-    ];
-
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      for (const ep of endpoints) {
-        try {
-          const res = await fetch(ep);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const sid = extractSessionId(data);
-          if ((data?.success ?? true) && sid) return String(sid);
-        } catch {
-          // ignore
-        }
-      }
-      await sleep(500);
-    }
-    return null;
-  };
-
-  const startRoleplaySession = async (target: User): Promise<RPStartResult> => {
+  // ===== 主动发起对戏（稳态版）=====
+  const startRoleplaySession = async (target: User): Promise<any> => {
     if (isCreatingRP) return { ok: false, message: '正在建立连接，请稍候' };
     if (!target?.id || target.id === user.id) return { ok: false, message: '目标玩家无效' };
 
     setIsCreatingRP(true);
-
-    const locationName = LOCATIONS.find(l => l.id === effectiveLocationId)?.name || '未知区域';
-
-    const payloadVariants = [
-      {
-        initiatorId: user.id,
-        initiatorName: user.name,
-        targetId: target.id,
-        targetName: target.name,
-        locationId: effectiveLocationId || 'unknown',
-        locationName
-      },
-      {
-        fromUserId: user.id,
-        fromUserName: user.name,
-        toUserId: target.id,
-        toUserName: target.name,
-        locationId: effectiveLocationId || 'unknown',
-        locationName
-      },
-      {
-        userAId: user.id,
-        userBId: target.id,
-        locationId: effectiveLocationId || 'unknown',
-        locationName
-      },
-      {
-        participants: [user.id, target.id],
-        locationId: effectiveLocationId || 'unknown',
-        locationName
-      }
-    ];
-
-    const endpoints = [
-      '/api/rp/session/start',
-      '/api/rp/session/create',
-      '/api/rp/start'
-    ];
-
-    let lastMsg = '';
-
     try {
-      for (const ep of endpoints) {
-        for (const payload of payloadVariants) {
-          try {
-            const res = await fetch(ep, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
+      const sid = buildPairSessionId(user.id, target.id, effectiveLocationId || 'unknown');
+      const locationName = LOCATIONS.find(l => l.id === effectiveLocationId)?.name || '未知区域';
 
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-              lastMsg = data?.message || `${ep} 请求失败(${res.status})`;
-              continue;
-            }
+      // 先打开窗口（避免卡在后端500）
+      setActiveRPSessionId(sid);
 
-            // 1) 直接返回会话ID
-            let sid = extractSessionId(data);
-            if ((data?.success ?? true) && sid) {
-              sid = String(sid);
-              setActiveRPSessionId(sid);
-              showToast(`已向 ${target.name} 发起对戏连接`);
-              return { ok: true, sessionId: sid };
-            }
+      // 异步上报后端建立/续用会话
+      fetch('/api/rp/session/upsert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sid,
+          userAId: user.id,
+          userAName: user.name,
+          userBId: target.id,
+          userBName: target.name,
+          locationId: effectiveLocationId || 'unknown',
+          locationName
+        })
+      }).catch(() => {});
 
-            // 2) 异步创建，补捞 active session
-            sid = await waitSessionFromActiveApis(5000);
-            if (sid) {
-              setActiveRPSessionId(sid);
-              showToast(`已向 ${target.name} 发起对戏连接`);
-              return { ok: true, sessionId: sid };
-            }
-
-            lastMsg = data?.message || '会话创建成功但未返回sessionId';
-          } catch (e: any) {
-            lastMsg = e?.message || '网络错误';
-          }
-        }
-      }
-
-      return { ok: false, message: lastMsg || '后端未返回有效会话ID' };
+      showToast(`已向 ${target.name} 发起对戏连接`);
+      return { ok: true, sessionId: sid };
+    } catch (e: any) {
+      return { ok: false, message: e?.message || '建立连接失败' };
     } finally {
       setIsCreatingRP(false);
     }
@@ -501,17 +384,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     localPlayers.forEach((p: any, idx: number) => {
       const h = hashNum(`${p.id}-${idx}`);
 
-      // 初始锚点
-      let x = 12 + (h % 76);            // 12 ~ 88
-      let y = 18 + ((h * 7) % 58);      // 18 ~ 76
+      let x = 12 + (h % 76);
+      let y = 18 + ((h * 7) % 58);
 
-      // 尝试避让：若与已放置点太近，沿螺旋偏移
       let found = false;
       for (let t = 0; t < 36; t++) {
         const ok = placed.every(pt => {
           const dx = x - pt.x;
           const dy = y - pt.y;
-          return (dx * dx + dy * dy) >= 65; // 最小间距阈值（百分比空间）
+          return (dx * dx + dy * dy) >= 65;
         });
         if (ok) {
           found = true;
@@ -531,9 +412,8 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
 
       placed.push({ x, y });
 
-      // 分层：越靠下越“近”，越大
-      const depth = y / 100; // 0~1
-      const scale = 0.84 + depth * 0.42; // 约 0.84 ~ 1.26
+      const depth = y / 100;
+      const scale = 0.84 + depth * 0.42;
       const z = Math.floor(20 + depth * 40);
       const delay = (h % 9) * 0.12;
 
@@ -635,7 +515,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           >
             {renderActiveView()}
 
-            {/* ===== 地点内头像气泡（升级版）===== */}
+            {/* 地点内头像气泡 */}
             <div className="absolute inset-0 z-30 pointer-events-none">
               {localPlayers.map((p, idx) => {
                 const b = bubbleLayout[String(p.id)];
@@ -711,7 +591,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* 右侧玩家列表（保留） */}
+      {/* 右侧玩家列表 */}
       <div className="fixed right-4 top-24 z-40">
         <div className="bg-slate-900/85 backdrop-blur-md border border-slate-700 rounded-2xl shadow-xl w-56 overflow-hidden">
           <button
