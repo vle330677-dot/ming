@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { createRpRouter } from './server/routes/rp.routes';
+import { createRpRouter } from './server/routes/rp.routes.js';
 
 
 dotenv.config();
@@ -492,42 +492,36 @@ async function startServer() {
   });
 
   app.post('/api/interact/steal', (req, res) => {
-  const { attackerId, thiefId, targetId } = req.body;
-  const realAttackerId = attackerId ?? thiefId;
-  if (!realAttackerId || !targetId) {
-    return res.status(400).json({ success: false, message: '参数缺失(attackerId/thiefId/targetId)' });
-  }
-
-  try {
-    const targetItems = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND qty > 0').all(targetId) as any[];
-    if (targetItems.length === 0) {
-      return res.json({ success: false, message: '对方穷得叮当响，什么都没偷到。' });
+    const { attackerId, targetId } = req.body;
+    try {
+      const targetItems = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND qty > 0').all(targetId) as any[];
+      if (targetItems.length === 0) {
+        return res.json({ success: false, message: '对方穷得叮当响，什么都没偷到。' });
+      }
+      
+      const itemToSteal = targetItems[Math.floor(Math.random() * targetItems.length)];
+      
+      const transaction = db.transaction(() => {
+        if (itemToSteal.qty === 1) {
+          db.prepare('DELETE FROM user_inventory WHERE id = ?').run(itemToSteal.id);
+        } else {
+          db.prepare('UPDATE user_inventory SET qty = qty - 1 WHERE id = ?').run(itemToSteal.id);
+        }
+        
+        const existingInAttacker = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(attackerId, itemToSteal.name) as any;
+        if (existingInAttacker) {
+          db.prepare('UPDATE user_inventory SET qty = qty + 1 WHERE id = ?').run(existingInAttacker.id);
+        } else {
+          db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(attackerId, itemToSteal.name);
+        }
+      });
+      transaction();
+      
+      res.json({ success: true, message: `得手了！你从对方身上顺走了 [${itemToSteal.name}]！` });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
     }
-
-    const itemToSteal = targetItems[Math.floor(Math.random() * targetItems.length)];
-
-    const transaction = db.transaction(() => {
-      if (itemToSteal.qty === 1) {
-        db.prepare('DELETE FROM user_inventory WHERE id = ?').run(itemToSteal.id);
-      } else {
-        db.prepare('UPDATE user_inventory SET qty = qty - 1 WHERE id = ?').run(itemToSteal.id);
-      }
-
-      const existingInAttacker = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(realAttackerId, itemToSteal.name) as any;
-      if (existingInAttacker) {
-        db.prepare('UPDATE user_inventory SET qty = qty + 1 WHERE id = ?').run(existingInAttacker.id);
-      } else {
-        db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(realAttackerId, itemToSteal.name);
-      }
-    });
-
-    transaction();
-    res.json({ success: true, message: `得手了！你从对方身上顺走了 [${itemToSteal.name}]！` });
-  } catch (e: any) {
-    res.status(500).json({ success: false, message: e.message });
-  }
-});
-
+  });
 
   app.post('/api/combat/end', (req, res) => {
     const { userId } = req.body;
