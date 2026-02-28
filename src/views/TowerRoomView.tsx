@@ -43,7 +43,24 @@ export function TowerRoomView({ currentUser, homeOwner, spiritStatus, onClose, s
     password: (currentUser as any).password || '' 
   });
 
-  const [rpLogs, setRpLogs] = useState<any[]>([]);
+// 把 rpLogs 替换为 rpArchives
+  const [rpArchives, setRpArchives] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchRoomData = async () => {
+      try {
+        if (isOwner) {
+          // 修改为请求新的归档 API
+          const logRes = await fetch(`/api/users/${currentUser.id}/rp_archives`); 
+          const logData = await logRes.json();
+          if (logData.success) setRpArchives(logData.archives || []);
+        }
+      } catch (e) {
+        console.error("加载房间数据失败");
+      }
+    };
+    fetchRoomData();
+  }, [homeOwner.id, isOwner, currentUser.id]);
   const bgImgInputRef = useRef<HTMLInputElement>(null);
   const spiritImgInputRef = useRef<HTMLInputElement>(null);
 
@@ -83,17 +100,34 @@ export function TowerRoomView({ currentUser, homeOwner, spiritStatus, onClose, s
     }
   };
 
-  const exportLogs = () => {
-    if (rpLogs.length === 0) return showToast("暂无对戏记录可导出。");
-    const text = rpLogs.map(l => `[${new Date(l.createdAt).toLocaleString()}] ${l.senderName} -> ${l.receiverName}:\n${l.content}\n`).join('\n');
+const exportLogs = (archive?: any) => {
+    const targets = archive ? [archive] : rpArchives;
+    if (targets.length === 0) return showToast("暂无对戏记录可导出。");
+    
+    let text = '';
+    targets.forEach(arc => {
+       text += `========================================\n`;
+       text += `【剧目】${arc.title}\n`;
+       text += `【地点】${arc.locationName || '未知区域'}\n`;
+       text += `【参演】${arc.participantNames}\n`;
+       text += `【时间】${new Date(arc.createdAt).toLocaleString()}\n`;
+       text += `========================================\n\n`;
+       
+       arc.messages.forEach((m: any) => {
+          if (m.type === 'system') {
+              text += `[系统广播]: ${m.content}\n\n`;
+          } else {
+              text += `[${m.senderName}]:\n${m.content}\n\n`;
+          }
+       });
+       text += `\n`;
+    });
+    
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `${currentUser.name}_对戏记录回顾.txt`;
-    document.body.appendChild(link);
+    link.href = URL.createObjectURL(blob);
+    link.download = archive ? `剧目_${archive.title}.txt` : `${currentUser.name}_全对戏归档.txt`;
     link.click();
-    document.body.removeChild(link);
   };
 
   // 统一保存设置（包含密码和房间信息）
@@ -220,24 +254,48 @@ export function TowerRoomView({ currentUser, homeOwner, spiritStatus, onClose, s
             <div className="p-10 h-full flex flex-col">
               <div className="flex justify-between items-end mb-6 border-b border-slate-200 pb-4">
                 <div>
-                  <h2 className="text-2xl font-black text-slate-800">剧情回顾</h2>
-                  <p className="text-xs text-slate-500 mt-1">这里收录了你参与过的所有对戏记录。</p>
+                  <h2 className="text-2xl font-black text-slate-800">书房 · 剧情回顾</h2>
+                  <p className="text-xs text-slate-500 mt-1">你的所有羁绊与剧情都在此被完美封存。</p>
                 </div>
-                <button onClick={exportLogs} className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-xs font-black rounded-lg hover:bg-slate-800">
-                  <Download size={14}/> 导出为 TXT
+                <button onClick={() => exportLogs()} className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-xs font-black rounded-lg hover:bg-slate-800">
+                  <Download size={14}/> 导出全部归档 (TXT)
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-4 pr-4 custom-scrollbar">
-                {rpLogs.length === 0 ? (
-                  <p className="text-center text-slate-400 mt-10 text-sm">暂无对戏记录</p>
+              <div className="flex-1 overflow-y-auto space-y-6 pr-4 custom-scrollbar">
+                {rpArchives.length === 0 ? (
+                  <p className="text-center text-slate-400 mt-10 text-sm">暂无对戏记录，多出去走走吧！</p>
                 ) : (
-                  rpLogs.map((log, idx) => (
-                    <div key={idx} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                      <div className="text-[10px] text-slate-400 mb-2 flex justify-between">
-                        <span>{log.senderName} 发送给 {log.receiverName}</span>
-                        <span>{new Date(log.createdAt).toLocaleString()}</span>
+                  rpArchives.map((arc, idx) => (
+                    <div key={idx} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="bg-slate-50 p-4 border-b border-slate-100 flex justify-between items-center">
+                        <div>
+                          <h4 className="font-black text-slate-800 text-lg">{arc.title}</h4>
+                          <div className="text-[10px] text-slate-500 mt-1 flex gap-3">
+                            <span><MapPin size={10} className="inline mr-1"/>{arc.locationName || '未知地点'}</span>
+                            <span>👥 {arc.participantNames}</span>
+                            <span>🕒 {new Date(arc.createdAt).toLocaleString()}</span>
+                          </div>
+                        </div>
+                        <button onClick={() => exportLogs(arc)} className="p-2 text-sky-600 bg-sky-50 rounded-lg hover:bg-sky-100 transition-colors" title="单独导出此剧目">
+                          <Download size={16}/>
+                        </button>
                       </div>
-                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{log.content}</p>
+                      
+                      {/* 聊天记录框 */}
+                      <div className="p-4 bg-slate-100/50 max-h-[300px] overflow-y-auto custom-scrollbar space-y-3">
+                        {arc.messages?.map((m: any, mIdx: number) => (
+                          m.type === 'system' ? (
+                            <div key={mIdx} className="text-center text-[10px] text-slate-400 my-2">— {m.content} —</div>
+                          ) : (
+                            <div key={mIdx} className={`flex flex-col ${m.senderId === currentUser.id ? 'items-end' : 'items-start'}`}>
+                              <span className="text-[10px] text-slate-500 mb-1">{m.senderName}</span>
+                              <div className={`p-3 rounded-2xl text-xs leading-relaxed max-w-[85%] ${m.senderId === currentUser.id ? 'bg-sky-600 text-white rounded-tr-sm' : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'}`}>
+                                {m.content}
+                              </div>
+                            </div>
+                          )
+                        ))}
+                      </div>
                     </div>
                   ))
                 )}

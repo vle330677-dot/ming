@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, MapPin } from 'lucide-react';
 import { X, MapPin, Settings, Skull, Cross, Send, Trash2 } from 'lucide-react';
 import { User } from '../types';
+import { PlayerInteractionUI } from './PlayerInteractionUI';
+
 
 // ================== 组件导入 ==================
 // 1. 导入新的悬浮角色状态栏 (请确保 CharacterHUD.tsx 已创建)
@@ -60,6 +62,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [activeView, setActiveView] = useState<string | null>(null);
   const [localPlayers, setLocalPlayers] = useState<any[]>([]);
   const [interactTarget, setInteractTarget] = useState<any>(null);
+  const [activeRPSessionId, setActiveRPSessionId] = useState<string | null>(null);
   // ... 原有 state
   const [showSettings, setShowSettings] = useState(false);
   const [showDeathForm, setShowDeathForm] = useState<'death' | 'ghost' | null>(null);
@@ -111,6 +114,22 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const userAge = user?.age || 0;
   const isUndifferentiated = userAge < 16;
   const isStudentAge = userAge >= 16 && userAge <= 19;
+
+  const handleStartRP = async (target: User) => {
+  const res = await fetch('/api/rp/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 
+      initiator: user, 
+      target: target, 
+      locationId: user.currentLocation, 
+      locationName: selectedLocation?.name || '未知区域' 
+    })
+  });
+  const data = await res.json();
+  if (data.success) {
+    setActiveRPSessionId(data.sessionId);
+  }
+};
 
   // 轮询同地图玩家
   useEffect(() => {
@@ -317,31 +336,20 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       </AnimatePresence>
 
       {/* 5. 玩家互动弹窗 (居中) */}
+      {/* 5. 玩家互动弹窗 (全新的环绕面板) */}
       <AnimatePresence>
         {interactTarget && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setInteractTarget(null)}>
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }} 
-              animate={{ scale: 1, opacity: 1 }} 
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={e => e.stopPropagation()}
-              className="bg-slate-900 border border-slate-700 p-8 rounded-[32px] w-full max-w-xs text-center relative shadow-2xl"
-            >
-              <button onClick={() => setInteractTarget(null)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X size={20}/></button>
-              <div className="w-24 h-24 rounded-3xl bg-slate-800 mx-auto mb-5 border-2 border-slate-700 overflow-hidden shadow-inner">
-                {interactTarget.avatarUrl ? <img src={interactTarget.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-4xl text-slate-600">{interactTarget.name[0]}</div>}
-              </div>
-              <h4 className="text-xl font-black text-white mb-1">{interactTarget.name}</h4>
-              <p className="text-xs text-slate-500 mb-8 uppercase tracking-widest font-bold">
-                {interactTarget.role || '未知'} · {interactTarget.faction || '无派系'}
-              </p>
-              
-              <div className="grid grid-cols-2 gap-3">
-                <button className="py-3 bg-sky-600 text-white rounded-2xl text-xs font-black hover:bg-sky-500 transition-colors shadow-lg shadow-sky-900/20">发起对戏</button>
-                <button className="py-3 bg-slate-800 text-white rounded-2xl text-xs font-black hover:bg-slate-700 transition-colors">查看资料</button>
-              </div>
-            </motion.div>
-          </div>
+          <PlayerInteractionUI 
+            currentUser={user}
+            targetUser={interactTarget}
+            onClose={() => setInteractTarget(null)}
+            showToast={showToast}
+            onStartRP={(target) => {
+              // 暂时用 Toast 代替，我们下一步再做对戏/群聊窗口的 UI
+              showToast(`正在与 ${target.name} 建立精神连接...`);
+              // 这里将设置状态唤出对戏组件： setChatTarget(target);
+            }}
+          />
         )}
       </AnimatePresence>
     {/* --- 新增：强制挂起锁屏 --- */}
@@ -517,6 +525,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           </div>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+  {activeRPSessionId && (
+    <RoleplayWindow 
+      sessionId={activeRPSessionId} 
+      currentUser={user} 
+      onClose={() => setActiveRPSessionId(null)} 
+    />
+  )}
+</AnimatePresence>
     </div>
   );
 }

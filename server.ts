@@ -49,6 +49,64 @@ db.exec(`
     fury INTEGER DEFAULT 0,
     partyId TEXT DEFAULT NULL
   );
+  CREATE TABLE IF NOT EXISTS active_rp_sessions (
+      id TEXT PRIMARY KEY,
+      locationId TEXT,
+      locationName TEXT,
+      status TEXT DEFAULT 'active', -- active, ending, mediating (评理中)
+      endProposedBy INTEGER DEFAULT NULL -- 记录谁发起了结束请求
+    );
+
+    CREATE TABLE IF NOT EXISTS active_rp_members (
+      sessionId TEXT,
+      userId INTEGER,
+      userName TEXT,
+      role TEXT,
+      PRIMARY KEY(sessionId, userId)
+    );
+
+    CREATE TABLE IF NOT EXISTS active_rp_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sessionId TEXT,
+      senderId INTEGER,
+      senderName TEXT,
+      content TEXT,
+      type TEXT DEFAULT 'text', -- text, system
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  CREATE TABLE IF NOT EXISTS player_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ownerId INTEGER,
+      targetId INTEGER,
+      content TEXT,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(ownerId, targetId)
+    );
+
+    -- 2. 组队与纠缠系统
+    CREATE TABLE IF NOT EXISTS teams (
+      id TEXT PRIMARY KEY,
+      leaderId INTEGER,
+      status TEXT DEFAULT 'active', -- active, disbanding
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS team_members (
+      teamId TEXT,
+      userId INTEGER,
+      status TEXT DEFAULT 'pending', -- pending, accepted, entangled (纠缠中)
+      PRIMARY KEY (teamId, userId)
+    );
+
+    -- 3. 对戏存档系统
+    CREATE TABLE IF NOT EXISTS rp_archives (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      locationId TEXT,
+      participants TEXT, -- JSON array of user IDs
+      status TEXT DEFAULT 'active', -- active, ended
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
   CREATE TABLE IF NOT EXISTS rescue_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,6 +232,27 @@ db.exec(`
     status TEXT DEFAULT 'active',
     endsAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  -- 3. 对戏存档系统 (新增/修改)
+    CREATE TABLE IF NOT EXISTS rp_archives (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      locationId TEXT,
+      locationName TEXT,      -- 新增：方便直接显示和搜索
+      participants TEXT,      -- JSON array of user IDs
+      participantNames TEXT,  -- 新增：参与者名字集，方便搜索
+      status TEXT DEFAULT 'active',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS rp_archive_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      archiveId TEXT,
+      senderId INTEGER,
+      senderName TEXT,
+      content TEXT,
+      type TEXT DEFAULT 'text',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 `);
 
 // 动态补全可能缺失的字段 (兼容老数据库)
@@ -215,6 +294,8 @@ addColumn('users', 'allowVisit', 'INTEGER DEFAULT 1');
 addColumn('roleplay_messages', 'locationId', 'TEXT');
 addColumn('global_items', 'npcId', 'TEXT');
 addColumn('global_skills', 'npcId', 'TEXT');
+addColumn('rp_archives', 'locationName', 'TEXT');
+addColumn('rp_archives', 'participantNames', 'TEXT');
 
 // ================= 2. 初始数据种子 =================
 const seedData = () => {
@@ -332,6 +413,136 @@ async function startServer() {
 
   // ================= 5. 游戏前端核心 API =================
 
+  // --- 玩家笔记 ---
+  app.get('/api/notes/:ownerId/:targetId', (req, res) => {
+    const note = db.prepare('SELECT content FROM player_notes WHERE ownerId = ? AND targetId = ?').get(req.params.ownerId, req.params.targetId);
+    res.json({ success: true, content: note ? (note as any).content : '' });
+  });
+
+  app.post('/api/notes', (req, res) => {
+    const { ownerId, targetId, content } = req.body;
+    db.prepare(`
+      INSERT INTO player_notes (ownerId, targetId, content) VALUES (?, ?, ?)
+      ON CONFLICT(ownerId, targetId) DO UPDATE SET content = excluded.content, updatedAt = CURRENT_TIMESTAMP
+    `).run(ownerId, targetId, content);
+    res.json({ success: true });
+  });
+  // 发起对戏 (建立会话并自动组队)
+  app.post('/api/rp/start', (req, res) => {
+    const { initiator, target, locationId, locationName } = req.body;
+    const sessionId = `RP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    
+    db.transaction(() => {
+      db.prepare('INSERT INTO active_rp_sessions (id, locationId, locationName) VALUES (?, ?, ?)')
+        .run(sessionId, locationId, locationName);
+      
+      const insertMember = db.prepare('INSERT INTO active_rp_members (sessionId, userId, userName, role) VALUES (?, ?, ?, ?)');
+      insertMember.run(sessionId, initiator.id, initiator.name, initiator.role);
+      insertMember.run(sessionId, target.id, target.name, target.role);
+      
+      db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type) VALUES (?, ?, ?, ?, ?)')
+        .run(sessionId, 0, '系统', `${initiator.name} 与 ${target.name} 开始了对戏，你们现在处于组队纠缠状态。`, 'system');
+    })();
+    
+    res.json({ success: true, sessionId });
+  });
+
+  // 获取会话数据与消息 (短轮询用)
+  app.get('/api/rp/session/:id', (req, res) => {
+    const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
+    if (!session) return res.json({ success: false });
+
+    const members = db.prepare('SELECT * FROM active_rp_members WHERE sessionId = ?').all(req.params.id);
+    const messages = db.prepare('SELECT * FROM active_rp_messages WHERE sessionId = ? ORDER BY createdAt ASC').all(req.params.id);
+    
+    res.json({ success: true, session, members, messages });
+  });
+
+  // 发送对戏消息
+  app.post('/api/rp/session/:id/message', (req, res) => {
+    const { senderId, senderName, content } = req.body;
+    db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, senderId, senderName, content);
+    res.json({ success: true });
+  });
+
+  // 申请评理 (呼叫军队)
+  app.post('/api/rp/session/:id/mediate', (req, res) => {
+    const { requesterName } = req.body;
+    db.prepare("UPDATE active_rp_sessions SET status = 'mediating' WHERE id = ?").run(req.params.id);
+    db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type) VALUES (?, ?, ?, ?, ?)')
+      .run(req.params.id, 0, '塔区广播', `[评理请求] ${requesterName} 呼叫了军队阵营介入调停！等待军队玩家加入...`, 'system');
+    res.json({ success: true });
+  });
+
+// 发起结束对戏 / 同意结束并存档
+  app.post('/api/rp/session/:id/end', (req, res) => {
+    const { userId, archiveTitle } = req.body;
+    const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
+    
+    if (session.endProposedBy && session.endProposedBy !== userId) {
+      // 对方同意，生成完整存档
+      const members = db.prepare('SELECT * FROM active_rp_members WHERE sessionId = ?').all(req.params.id);
+      const memberIds = JSON.stringify(members.map((m: any) => m.userId));
+      const memberNames = members.map((m: any) => m.userName).join(', '); // 拼接名字用于搜索
+      
+      db.transaction(() => {
+        const archiveId = `ARC-${Date.now()}`;
+        // 1. 插入主档案
+        db.prepare('INSERT INTO rp_archives (id, title, locationId, locationName, participants, participantNames) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(archiveId, archiveTitle || `${session.locationName}的邂逅`, session.locationId, session.locationName, memberIds, memberNames);
+        
+        // 2. 将临时消息全部转移到永久存档表中
+        db.prepare(`
+          INSERT INTO rp_archive_messages (archiveId, senderId, senderName, content, type, createdAt)
+          SELECT ?, senderId, senderName, content, type, createdAt FROM active_rp_messages WHERE sessionId = ?
+        `).run(archiveId, req.params.id);
+
+        // 3. 删除活跃会话
+        db.prepare('DELETE FROM active_rp_sessions WHERE id = ?').run(req.params.id);
+        db.prepare('DELETE FROM active_rp_members WHERE sessionId = ?').run(req.params.id);
+        db.prepare('DELETE FROM active_rp_messages WHERE sessionId = ?').run(req.params.id);
+      })();
+      return res.json({ success: true, ended: true });
+    } else {
+      // 自己发起结束提议
+      db.prepare("UPDATE active_rp_sessions SET status = 'ending', endProposedBy = ? WHERE id = ?").run(userId, req.params.id);
+      db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type) VALUES (?, ?, ?, ?, ?)')
+        .run(req.params.id, 0, '系统', `一方发起了离开并结束对戏的请求，等待另一方确认...`, 'system');
+      return res.json({ success: true, ended: false });
+    }
+  });
+
+  // --- 交互动作 API (战斗、偷窃、恶作剧等基础结算) ---
+  app.post('/api/interact/combat', (req, res) => {
+    const { attackerId, defenderId, attackerScore, defenderScore } = req.body;
+    // 简化的胜负判定：分高者胜，败者扣 5% HP
+    const isAttackerWin = attackerScore >= defenderScore;
+    const loserId = isAttackerWin ? defenderId : attackerId;
+    db.prepare('UPDATE users SET hp = maxHp * 0.95 WHERE id = ?').run(loserId);
+    res.json({ success: true, isAttackerWin, loserId });
+  });
+
+  app.post('/api/interact/prank', (req, res) => {
+    const { ghostId, targetId, targetRole } = req.body;
+    // 鬼魂恶作剧逻辑
+    if (targetRole === '哨兵') {
+      db.prepare('UPDATE users SET fury = MIN(100, fury + 15) WHERE id = ?').run(targetId);
+      res.json({ success: true, message: '恶作剧成功，对方狂暴值上升！' });
+    } else {
+      db.prepare('UPDATE users SET mp = MAX(0, mp - (maxMp * 0.05)) WHERE id = ?').run(targetId);
+      res.json({ success: true, message: '恶作剧成功，对方精神力受损！' });
+    }
+  });
+
+  app.post('/api/interact/probe', (req, res) => {
+    const { targetId } = req.body;
+    const target = db.prepare('SELECT mentalRank, physicalRank, ability, hp, mp, fury FROM users WHERE id = ?').get(targetId) as any;
+    // 随机返回一个属性
+    const keys = Object.keys(target);
+    const randomKey = keys[Math.floor(Math.random() * keys.length)];
+    res.json({ success: true, probedStat: { key: randomKey, value: target[randomKey] } });
+  });
   // --- 狂暴值系统：战斗增加 ---
   app.post('/api/combat/end', (req, res) => {
     const { userId } = req.body;
@@ -1038,6 +1249,25 @@ async function startServer() {
     const { userId } = req.body; // 校验是不是本人删的
     db.prepare('DELETE FROM tombstone_comments WHERE id = ? AND userId = ?').run(req.params.commentId, userId);
     res.json({ success: true });
+  });
+  // 获取个人的所有对戏存档
+  app.get('/api/users/:id/rp_archives', (req, res) => {
+    const userId = req.params.id;
+    // SQLite 的 LIKE 查找 JSON 里的 ID，虽然偷懒但在此体量下绝对够用
+    const archives = db.prepare(`SELECT * FROM rp_archives WHERE participants LIKE ? ORDER BY createdAt DESC`).all(`%${userId}%`) as any[];
+    for (let arc of archives) {
+      arc.messages = db.prepare('SELECT * FROM rp_archive_messages WHERE archiveId = ? ORDER BY createdAt ASC').all(arc.id);
+    }
+    res.json({ success: true, archives });
+  });
+
+  // 获取全服的所有对戏存档 (用于管理员)
+  app.get('/api/admin/rp_archives', (_req, res) => {
+    const archives = db.prepare('SELECT * FROM rp_archives ORDER BY createdAt DESC').all() as any[];
+    for (let arc of archives) {
+      arc.messages = db.prepare('SELECT * FROM rp_archive_messages WHERE archiveId = ? ORDER BY createdAt ASC').all(arc.id);
+    }
+    res.json({ success: true, archives });
   });
 }
 

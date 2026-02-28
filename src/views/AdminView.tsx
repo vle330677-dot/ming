@@ -50,13 +50,13 @@ interface UserSkill {
   level: number;
 }
 
-interface RoleplayLog {
-  id: number;
-  senderName: string;
-  receiverName: string;
-  content: string;
+interface RPArchive {
+  id: string;
+  title: string;
+  locationName: string;
+  participantNames: string;
   createdAt: string;
-  locationId?: string;
+  messages: any[];
 }
 
 interface GlobalItem {
@@ -104,6 +104,8 @@ export function AdminView() {
   const [items, setItems] = useState<GlobalItem[]>([]);
   const [skills, setSkills] = useState<GlobalSkill[]>([]);
   const [loading, setLoading] = useState(false);
+  const [archives, setArchives] = useState<RPArchive[]>([]);
+  const [archiveSearch, setArchiveSearch] = useState(''); // 新增：搜索词
 
   // 编辑用户状态
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -139,7 +141,53 @@ export function AdminView() {
     }
   }, [editingUser]);
 
-  const fetchData = async () => {
+  const endpoints: Record<AdminTab, string> = {
+      users: '/api/admin/users',
+      logs: '/api/admin/rp_archives', // 替换旧的路由
+      items: '/api/items',
+      skills: '/api/skills'
+    };
+    
+    // ...
+    if (activeTab === 'logs') setArchives(data.archives || []);
+
+  // 过滤后的档案
+  const filteredArchives = useMemo(() => {
+    if (!archiveSearch.trim()) return archives;
+    const term = archiveSearch.toLowerCase();
+    return archives.filter(a => 
+      (a.title && a.title.toLowerCase().includes(term)) || 
+      (a.locationName && a.locationName.toLowerCase().includes(term)) || 
+      (a.participantNames && a.participantNames.toLowerCase().includes(term))
+    );
+  }, [archives, archiveSearch]);
+
+  const exportFilteredArchives = () => {
+    if (filteredArchives.length === 0) return alert('没有可导出的数据');
+    let text = `===== 塔区全域对戏档案库 (共 ${filteredArchives.length} 卷) =====\n\n`;
+    
+    filteredArchives.forEach(arc => {
+       text += `========================================\n`;
+       text += `【归档号】${arc.id}\n`;
+       text += `【剧  目】${arc.title}\n`;
+       text += `【地  点】${arc.locationName || '未知'}\n`;
+       text += `【参演者】${arc.participantNames}\n`;
+       text += `【时  间】${new Date(arc.createdAt).toLocaleString()}\n`;
+       text += `========================================\n\n`;
+       arc.messages?.forEach((m: any) => {
+          if (m.type === 'system') text += `[系统]: ${m.content}\n\n`;
+          else text += `[${m.senderName}]:\n${m.content}\n\n`;
+       });
+       text += `\n`;
+    });
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `世界对戏归档库_导出.txt`;
+    link.click();
+  };
+    const fetchData = async () => {
     setLoading(true);
     const endpoints: Record<AdminTab, string> = {
       users: '/api/admin/users',
@@ -423,53 +471,59 @@ export function AdminView() {
             </motion.div>
           )}
 
-          {/* 2. 日志 */}
+          {/* 2. 对戏档案库 */}
           {activeTab === 'logs' && (
-            <motion.div key="logs" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10">
-              {Object.keys(groupedLogs).length === 0 && <div className="text-center py-20 text-slate-400 font-bold">目前世界非常安静，没有任何戏份存档。</div>}
+            <motion.div key="logs" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              
+              {/* 搜索与控制台 */}
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 flex flex-col md:flex-row gap-4 items-center justify-between shadow-sm">
+                <div className="flex-1 w-full relative">
+                  <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
+                  <input 
+                    type="text"
+                    value={archiveSearch}
+                    onChange={e => setArchiveSearch(e.target.value)}
+                    placeholder="输入玩家名字、剧目标题或地点名称进行检索..."
+                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-sky-500/20 text-sm font-bold text-slate-700"
+                  />
+                </div>
+                <button onClick={exportFilteredArchives} className="w-full md:w-auto flex justify-center items-center gap-2 px-6 py-3 bg-slate-900 text-white font-black rounded-xl hover:bg-slate-800 transition-colors shadow-lg whitespace-nowrap">
+                  <Download size={16}/> 导出当前结果 (TXT)
+                </button>
+              </div>
 
-              {Object.entries(groupedLogs).map(([loc, pairs]) => (
-                <div key={loc} className="bg-white rounded-[40px] border border-slate-200 p-8 shadow-sm">
-                  <div className="flex items-center gap-3 mb-8 pb-4 border-b border-slate-100">
-                    <div className="p-3 bg-sky-50 text-sky-600 rounded-2xl">
-                      <MapPin size={24} />
-                    </div>
-                    <div>
-                      <h3 className="text-2xl font-black text-slate-900">{LOCATIONS.find((l) => l.id === loc)?.name || loc}</h3>
-                      <p className="text-xs text-slate-400 font-bold mt-1">区域戏份收录库</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {Object.entries(pairs).map(([pairName, messages]) => (
-                      <div key={pairName} className="bg-slate-50 rounded-3xl p-6 border border-slate-100 shadow-inner flex flex-col h-full">
-                        <div className="flex items-center gap-2 mb-6">
-                          <Users size={16} className="text-indigo-500" />
-                          <h4 className="font-black text-indigo-900">
-                            {pairName}{' '}
-                            <span className="text-xs font-medium text-slate-400 ml-2">({messages.length} 条互动)</span>
-                          </h4>
-                        </div>
-
-                        <div className="space-y-4 max-h-[420px] overflow-y-auto pr-2 custom-scrollbar flex-1">
-                          {messages.map((m) => (
-                            <div key={m.id} className="relative pl-4 border-l-2 border-slate-200">
-                              <div className="absolute w-2 h-2 bg-slate-300 rounded-full -left-[5px] top-1.5" />
-                              <div className="flex justify-between items-end mb-1">
-                                <span className="text-xs font-black text-slate-800">{m.senderName}</span>
-                                <span className="text-[10px] text-slate-400 font-mono">{new Date(m.createdAt).toLocaleString()}</span>
-                              </div>
-                              <p className="text-sm text-slate-600 leading-relaxed bg-white p-3 rounded-xl border border-slate-100 shadow-sm inline-block">
-                                {m.content}
-                              </p>
-                            </div>
-                          ))}
+              {/* 档案列表展示 */}
+              {filteredArchives.length === 0 ? (
+                <div className="text-center py-20 text-slate-400 font-bold bg-white rounded-3xl border border-slate-200">没有找到匹配的归档记录。</div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {filteredArchives.map(arc => (
+                    <div key={arc.id} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                      <div className="bg-slate-50 p-5 border-b border-slate-100">
+                        <h3 className="text-lg font-black text-slate-900 mb-2">{arc.title}</h3>
+                        <div className="flex flex-wrap gap-2 text-xs font-bold">
+                          <span className="px-2 py-1 bg-sky-100 text-sky-700 rounded-md flex items-center gap-1"><MapPin size={12}/> {arc.locationName || '未知'}</span>
+                          <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-md flex items-center gap-1"><Users size={12}/> {arc.participantNames}</span>
+                          <span className="px-2 py-1 bg-slate-200 text-slate-600 rounded-md ml-auto">{new Date(arc.createdAt).toLocaleDateString()}</span>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <div className="p-5 flex-1 max-h-[350px] overflow-y-auto custom-scrollbar bg-slate-50/50 space-y-4">
+                        {arc.messages?.map((m, idx) => (
+                          m.type === 'system' ? (
+                            <div key={idx} className="text-center text-[10px] font-bold text-slate-400 my-2">— {m.content} —</div>
+                          ) : (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                              <span className="text-[10px] font-black text-sky-600 block mb-1">{m.senderName}</span>
+                              <p className="text-sm text-slate-700 whitespace-pre-wrap">{m.content}</p>
+                            </div>
+                          )
+                        ))}
+                        {(!arc.messages || arc.messages.length === 0) && <p className="text-slate-400 text-xs text-center">空档案：该会话没有产生任何聊天记录。</p>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </motion.div>
           )}
 
