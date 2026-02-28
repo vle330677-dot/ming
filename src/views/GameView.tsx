@@ -4,7 +4,7 @@ import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart, ArrowLeft, User
 import { User } from '../types';
 
 // ================== 组件导入 ==================
-import { PlayerInteractionUI } from './PlayerInteractionUI';
+import { PlayerInteractionUI, RPStartResult } from './PlayerInteractionUI';
 import { CharacterHUD } from './CharacterHUD';
 import { RoleplayWindow } from './RoleplayWindow';
 
@@ -64,29 +64,30 @@ function hashNum(input: string | number) {
   return Math.abs(h);
 }
 
-// ✅ 对戏 sessionId 兼容提取
+// ============ 对戏工具 ============
 function extractSessionId(data: any): string | null {
   if (!data) return null;
+  const candidates = [
+    data.sessionId,
+    data.activeSessionId,
+    data?.session?.id,
+    data?.id,
+    data?.roomId,
+    data?.rpSessionId,
+    data?.conversationId,
+    data?.channelId
+  ];
+  const found = candidates.find(Boolean);
+  if (found) return String(found);
 
-  const direct =
-    data.sessionId ||
-    data.activeSessionId ||
-    data?.session?.id ||
-    data?.id;
-
-  if (direct) return String(direct);
-
-  if (Array.isArray(data.sessions) && data.sessions.length > 0) {
-    const id = data.sessions[0]?.id;
-    if (id) return String(id);
-  }
-
-  if (Array.isArray(data.data) && data.data.length > 0) {
-    const id = data.data[0]?.id;
-    if (id) return String(id);
-  }
+  if (Array.isArray(data.sessions) && data.sessions[0]?.id) return String(data.sessions[0].id);
+  if (Array.isArray(data.data) && data.data[0]?.id) return String(data.data[0].id);
 
   return null;
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) {
@@ -198,7 +199,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           const res = await fetch(ep);
           if (!res.ok) continue;
           const data = await res.json();
-
           const sid = extractSessionId(data);
           if ((data?.success ?? true) && sid) {
             setActiveRPSessionId(String(sid));
@@ -220,50 +220,120 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const isUndifferentiated = userAge < 16;
   const isStudentAge = userAge >= 16 && userAge <= 19;
 
-  // ===== 主动发起对戏（返回 boolean）=====
-  const startRoleplaySession = async (target: User): Promise<boolean> => {
-    if (isCreatingRP) return false;
-    setIsCreatingRP(true);
+  // ===== 主动发起对戏（修复版）=====
+  const waitSessionFromActiveApis = async (timeoutMs = 6000): Promise<string | null> => {
+    const endpoints = [
+      `/api/rp/session/active/${user.id}`,
+      `/api/rp/active/${user.id}`,
+      `/api/rp/session/by-user/${user.id}`,
+      `/api/rp/sessions/${user.id}`
+    ];
 
-    const payload = {
-      initiatorId: user.id,
-      initiatorName: user.name,
-      targetId: target.id,
-      targetName: target.name,
-      locationId: effectiveLocationId || 'unknown',
-      locationName: LOCATIONS.find(l => l.id === effectiveLocationId)?.name || '未知区域'
-    };
-
-    const endpoints = ['/api/rp/session/start', '/api/rp/session/create', '/api/rp/start'];
-
-    try {
-      let sid: string | null = null;
-
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
       for (const ep of endpoints) {
         try {
-          const res = await fetch(ep, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
+          const res = await fetch(ep);
           if (!res.ok) continue;
-
           const data = await res.json();
-          sid = extractSessionId(data);
-          if ((data?.success ?? true) && sid) break;
+          const sid = extractSessionId(data);
+          if ((data?.success ?? true) && sid) return String(sid);
         } catch {
-          // try next
+          // ignore
+        }
+      }
+      await sleep(500);
+    }
+    return null;
+  };
+
+  const startRoleplaySession = async (target: User): Promise<RPStartResult> => {
+    if (isCreatingRP) return { ok: false, message: '正在建立连接，请稍候' };
+    if (!target?.id || target.id === user.id) return { ok: false, message: '目标玩家无效' };
+
+    setIsCreatingRP(true);
+
+    const locationName = LOCATIONS.find(l => l.id === effectiveLocationId)?.name || '未知区域';
+
+    const payloadVariants = [
+      {
+        initiatorId: user.id,
+        initiatorName: user.name,
+        targetId: target.id,
+        targetName: target.name,
+        locationId: effectiveLocationId || 'unknown',
+        locationName
+      },
+      {
+        fromUserId: user.id,
+        fromUserName: user.name,
+        toUserId: target.id,
+        toUserName: target.name,
+        locationId: effectiveLocationId || 'unknown',
+        locationName
+      },
+      {
+        userAId: user.id,
+        userBId: target.id,
+        locationId: effectiveLocationId || 'unknown',
+        locationName
+      },
+      {
+        participants: [user.id, target.id],
+        locationId: effectiveLocationId || 'unknown',
+        locationName
+      }
+    ];
+
+    const endpoints = [
+      '/api/rp/session/start',
+      '/api/rp/session/create',
+      '/api/rp/start'
+    ];
+
+    let lastMsg = '';
+
+    try {
+      for (const ep of endpoints) {
+        for (const payload of payloadVariants) {
+          try {
+            const res = await fetch(ep, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              lastMsg = data?.message || `${ep} 请求失败(${res.status})`;
+              continue;
+            }
+
+            // 1) 直接返回会话ID
+            let sid = extractSessionId(data);
+            if ((data?.success ?? true) && sid) {
+              sid = String(sid);
+              setActiveRPSessionId(sid);
+              showToast(`已向 ${target.name} 发起对戏连接`);
+              return { ok: true, sessionId: sid };
+            }
+
+            // 2) 异步创建，补捞 active session
+            sid = await waitSessionFromActiveApis(5000);
+            if (sid) {
+              setActiveRPSessionId(sid);
+              showToast(`已向 ${target.name} 发起对戏连接`);
+              return { ok: true, sessionId: sid };
+            }
+
+            lastMsg = data?.message || '会话创建成功但未返回sessionId';
+          } catch (e: any) {
+            lastMsg = e?.message || '网络错误';
+          }
         }
       }
 
-      if (!sid) {
-        showToast('对戏会话创建失败：后端未返回 sessionId');
-        return false;
-      }
-
-      setActiveRPSessionId(String(sid));
-      showToast(`已向 ${target.name} 发起对戏连接`);
-      return true;
+      return { ok: false, message: lastMsg || '后端未返回有效会话ID' };
     } finally {
       setIsCreatingRP(false);
     }
@@ -757,7 +827,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             onClose={() => setInteractTarget(null)}
             showToast={showToast}
             onStartRP={async (target) => {
-              return await startRoleplaySession(target); // ✅ 返回 boolean
+              return await startRoleplaySession(target);
             }}
           />
         )}
