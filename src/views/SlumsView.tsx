@@ -293,7 +293,8 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
                         <h3 className="text-xl font-bold text-white mb-2">定居西市</h3>
                         <p className="text-xs text-stone-400 leading-relaxed px-4">
                         西市只接纳真正的穷人和劳动者。<br/>
-                        <span className="text-orange-500 font-bold block mt-2">入住硬性条件：当前总资产 < 5000G</span>
+                        {/* 修正处：将 < 改为 &lt; */}
+                        <span className="text-orange-500 font-bold block mt-2">入住硬性条件：当前总资产 &lt; 5000G</span>
                         </p>
                     </div>
                     
