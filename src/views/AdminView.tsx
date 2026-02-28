@@ -40,6 +40,7 @@ interface AdminUser {
   currentLocation?: string;
   status: UserStatus;
   deathDescription?: string;
+  password?: string; // 新增：密码字段
 }
 
 interface RoleplayLog {
@@ -591,6 +592,13 @@ export function AdminView() {
                 <Input label="精神力等级" value={editingUser.mentalRank || ''} onChange={(v: string) => setEditingUser({ ...editingUser, mentalRank: v })} />
                 <Input label="肉体强度等级" value={editingUser.physicalRank || ''} onChange={(v: string) => setEditingUser({ ...editingUser, physicalRank: v })} />
                 <Input label="精神体名称" value={editingUser.spiritName || ''} onChange={(v: string) => setEditingUser({ ...editingUser, spiritName: v })} />
+                
+                {/* 新增：账号安全锁密码输入框 */}
+                <Input 
+                  label="全局账号密码 (留空即无密码)" 
+                  value={editingUser.password || ''} 
+                  onChange={(v: string) => setEditingUser({ ...editingUser, password: v })} 
+                />
 
                 <div className="col-span-1 md:col-span-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase ml-1 mb-1.5 block">个人资料文本</label>

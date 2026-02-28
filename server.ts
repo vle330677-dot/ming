@@ -41,7 +41,11 @@ db.exec(`
     workCount INTEGER DEFAULT 0,
     trainCount INTEGER DEFAULT 0,
     lastResetDate TEXT,
-    lastCheckInDate TEXT
+    lastCheckInDate TEXT,
+    password TEXT,
+    roomBgImage TEXT,
+    roomDescription TEXT,
+    allowVisit INTEGER DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS rescue_requests (
@@ -148,7 +152,7 @@ db.exec(`
   );
 `);
 
-// 动态补全可能缺失的字段
+// 动态补全可能缺失的字段 (兼容老数据库)
 const addColumn = (table: string, col: string, type: string) => {
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
@@ -175,10 +179,14 @@ const addColumn = (table: string, col: string, type: string) => {
   'profileText',
   'currentLocation',
   'lastResetDate',
-  'lastCheckInDate'
+  'lastCheckInDate',
+  'password',
+  'roomBgImage',
+  'roomDescription'
 ].forEach((c) => addColumn('users', c, 'TEXT'));
 addColumn('users', 'isHidden', 'INTEGER DEFAULT 0');
 addColumn('users', 'mentalProgress', 'REAL DEFAULT 0');
+addColumn('users', 'allowVisit', 'INTEGER DEFAULT 1');
 addColumn('roleplay_messages', 'locationId', 'TEXT');
 addColumn('global_items', 'npcId', 'TEXT');
 addColumn('global_skills', 'npcId', 'TEXT');
@@ -214,16 +222,100 @@ seedData();
 
 // ================= 3. 辅助配置 =================
 const JOB_SALARIES: Record<string, number> = {
-  神使: 1000,
+  '圣子/圣女': 5000,
   侍奉者: 1000,
-  神使后裔: 0,
-  仆从: 500
+  候选者: 3000,
+  仆从: 500,
+  // === 新增：伦敦塔职位 ===
+  伦敦塔教师: 800,      // 设定薪资 800g
+  伦敦塔职工: 400,      // 设定薪资 300-500g，取中间值
+  伦敦塔学员: 100,      // 给学生一点生活津贴，鼓励玩法
+  // === 新增：圣所职位 ===
+  圣所保育员: 500,     // 设定薪资 500g
+  圣所职工: 250,       // 设定薪资 200-300g，取中间值
+  圣所幼崽: 50,        // 每月发糖果钱
+  // === 新增：公会职位 ===
+  公会会长: 2000,      // 富可敌国，掌管地下交易
+  公会成员: 600,       // 有编制的成员，福利不错
+  冒险者: 0,           // 自由职业，全靠做任务赚赏金(Commission)
+  // === 新增：军队职位 (按军衔阶级) ===
+  军队将官: 1500,      // 荣耀与权力的顶端
+  军队校官: 1000,      // 中流砥柱
+  军队尉官: 800,       // 基层指挥
+  军队士兵: 500,       // 刚入伍的新兵，包吃包住
+  // === 新增：西区（贫民区）职位 ===
+  西区市长: 1200,      // 管理这片混乱之地不容易
+  西区副市长: 800,
+  西区技工: 300,       // 也就是西区平民，靠手艺吃饭，底薪低但能搓零件
+
+  // === 新增：东区（富人区）职位 (预告) ===
+  东区市长: 3000,      // 富得流油
+  东区副市长: 1500,
+  东区贵族: 1000,      // 也就是东区平民，什么都不干也有钱拿
+// === 新增：守塔会职位 ===
+  守塔会会长: 2500,     // 权势滔天，甚至妄图掌控塔
+  守塔会成员: 700,      // 类似公务员/神职人员，待遇稳定
+  // === 新增：恶魔会职位 ===
+  恶魔会会长: 1800,     // 混乱之王
+  恶魔会成员: 0,        // 没工资，全靠抢（或者叫“战利品分配”）
+  // === 新增：灵异管理所职位 ===
+  灵异所所长: 2500,     // 神秘的管理者
+  搜捕队队长: 1500,     // 带队抓鬼
+  搜捕队队员: 1000,     // 一线干员，工资不错
+  灵异所文员: 1000,     // 坐办公室处理档案
+  // === 新增：观察者职位 ===
+  观察者首领: 3000,     // 掌握世界秘密的人
+  情报搜集员: 800,      // 外勤，搞事情
+  情报处理员: 800       // 内勤，造假与审定
 };
+
 const JOB_LIMITS: Record<string, number> = {
-  神使: 1,
+  '圣子/圣女': 1,
   侍奉者: 2,
-  神使后裔: 2,
-  仆从: 9999
+  候选者: 3,
+  仆从: 99999,
+  // === 新增：伦敦塔职位限制 ===
+  伦敦塔教师: 100,
+  伦敦塔职工: 200,
+  伦敦塔学员: 9999,
+  // === 新增：圣所职位限制 ===
+  圣所保育员: 8,       // 老师不用太多
+  圣所职工: 150,
+  圣所幼崽: 9999,
+  // === 新增：公会职位限制 ===
+  公会会长: 1,
+  公会成员: 50,
+  冒险者: 9999,        // 门槛最低，人数最多
+  
+  // === 新增：军队职位限制 ===
+  军队将官: 3,         // 极稀有
+  军队校官: 10,
+  军队尉官: 30,
+  军队士兵: 9999,
+  // === 新增：西区职位限制 ===
+  西区市长: 1,
+  西区副市长: 2,
+  西区技工: 9999,
+  
+  // === 新增：东区职位限制 ===
+  东区市长: 1,
+  东区副市长: 2,
+  东区贵族: 9999,
+  // === 新增：守塔会职位限制 ===
+  守塔会会长: 1,
+  守塔会成员: 200,      // 规模较大的组织
+  // === 新增：恶魔会职位限制 ===
+  恶魔会会长: 1,
+  恶魔会成员: 9999,     // 来者不拒
+  // === 新增：灵异管理所职位限制 ===
+  灵异所所长: 1,
+  搜捕队队长: 10,       // 需带队
+  搜捕队队员: 50,
+  灵异所文员: 20,
+  // === 新增：观察者职位限制 ===
+  观察者首领: 1,
+  情报搜集员: 9999,
+  情报处理员: 9999
 };
 
 // 本地日期（避免 UTC 偏差）
@@ -269,6 +361,36 @@ async function startServer() {
   });
 
   // ================= 5. 游戏前端核心 API =================
+
+  // --- 精神力训练系统 ---
+  app.post('/api/training/complete', (req, res) => {
+    const { userId } = req.body;
+    const today = getLocalToday();
+
+    try {
+      const user = db.prepare('SELECT trainCount, mentalProgress, lastResetDate FROM users WHERE id = ?').get(userId) as any;
+      
+      if (!user) return res.json({ success: false, message: '用户不存在' });
+      
+      // 再次校验次数（防止前端作弊）
+      if (user.trainCount >= 3 && user.lastResetDate === today) {
+        return res.json({ success: false, message: '今日精神力训练次数已耗尽' });
+      }
+
+      // 计算新进度 (当前 + 5%，上限 100)
+      const newProgress = Math.min(100, (user.mentalProgress || 0) + 5);
+
+      db.prepare(`
+        UPDATE users 
+        SET mentalProgress = ?, trainCount = trainCount + 1 
+        WHERE id = ?
+      `).run(newProgress, userId);
+
+      res.json({ success: true, newProgress });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
 
   // --- 同地点玩家列表（用于点击头像发起对戏）---
   app.get('/api/locations/:locationId/players', (req, res) => {
@@ -385,10 +507,10 @@ async function startServer() {
   });
 
   app.put('/api/admin/users/:id', (req, res) => {
-    const { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status } = req.body;
+    const { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
     db.prepare(
       `UPDATE users
-       SET role=?, age=?, faction=?, mentalRank=?, physicalRank=?, ability=?, spiritName=?, profileText=?, status=?
+       SET role=?, age=?, faction=?, mentalRank=?, physicalRank=?, ability=?, spiritName=?, profileText=?, status=?, password=?
        WHERE id=?`
     ).run(
       role,
@@ -400,9 +522,27 @@ async function startServer() {
       spiritName,
       profileText,
       status || 'approved',
+      password || null,
       req.params.id
     );
 
+    res.json({ success: true });
+  });
+
+  // ========== 个人房间与设置接口 ==========
+  app.put('/api/users/:id/settings', (req, res) => {
+    const { roomBgImage, roomDescription, allowVisit, password } = req.body;
+    db.prepare(`
+       UPDATE users 
+       SET roomBgImage=?, roomDescription=?, allowVisit=?, password=? 
+       WHERE id=?
+    `).run(
+      roomBgImage || null, 
+      roomDescription || null, 
+      allowVisit ? 1 : 0, 
+      password || null, 
+      req.params.id
+    );
     res.json({ success: true });
   });
 
@@ -755,6 +895,25 @@ async function startServer() {
   app.put('/api/commissions/:id/accept', (req, res) => {
     db.prepare('UPDATE commissions SET status = "accepted", acceptedById = ?, acceptedByName = ? WHERE id = ?')
       .run(req.body.userId, req.body.userName, req.params.id);
+    res.json({ success: true });
+  });
+  
+  app.put('/api/commissions/:id/release', (req, res) => {
+    // 释放锁定，允许别人接取
+    db.prepare('UPDATE commissions SET status = "open", acceptedById = NULL, acceptedByName = NULL WHERE id = ?')
+      .run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.post('/api/commissions/:id/resolve-dispute', (req, res) => {
+    const { userId } = req.body;
+    const commissionId = req.params.id;
+
+    // 给军队调解员发 1000G
+    db.prepare('UPDATE users SET gold = gold + 1000 WHERE id = ?').run(userId);
+    // 将委托标记为完成或删除
+    db.prepare('DELETE FROM commissions WHERE id = ?').run(commissionId);
+
     res.json({ success: true });
   });
 
