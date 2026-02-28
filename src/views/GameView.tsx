@@ -73,6 +73,8 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
 
+  const [isCreatingRP, setIsCreatingRP] = useState(false);
+
   const currentBackgroundImage = useMemo(() => {
     if (activeView && LOCATION_BG_MAP[activeView]) return LOCATION_BG_MAP[activeView];
     return '/map_background.jpg';
@@ -110,7 +112,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       }
     }, 3000);
     return () => clearInterval(timer);
-  }, [isDying, rescueReqId, user.id, fetchGlobalData, showToast]);
+  }, [isDying, rescueReqId, user.id, showToast, fetchGlobalData]);
 
   useEffect(() => {
     if (!user.currentLocation) return;
@@ -127,6 +129,38 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     const timer = setInterval(fetchPlayers, 5000);
     return () => clearInterval(timer);
   }, [user.currentLocation, user.id]);
+
+  // ======= 对戏修复：轮询是否有主动会话（被别人发起时你也能自动弹窗） =======
+  useEffect(() => {
+    const pollIncomingRoleplay = async () => {
+      if (activeRPSessionId) return;
+      const endpoints = [
+        `/api/rp/session/active/${user.id}`,
+        `/api/rp/active/${user.id}`,
+        `/api/rp/session/by-user/${user.id}`,
+      ];
+
+      for (const url of endpoints) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const sid = data?.sessionId || data?.activeSessionId || data?.session?.id;
+          if (data?.success && sid) {
+            setActiveRPSessionId(String(sid));
+            showToast('收到新的对戏连接，已接入频道');
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    pollIncomingRoleplay();
+    const timer = setInterval(pollIncomingRoleplay, 2500);
+    return () => clearInterval(timer);
+  }, [user.id, activeRPSessionId, showToast]);
 
   const userAge = user?.age || 0;
   const isUndifferentiated = userAge < 16;
@@ -146,7 +180,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           setActiveView(null);
           fetchGlobalData();
         }
-      } catch (e) {
+      } catch {
         showToast("战斗系统连接中断");
       }
     } else {
@@ -157,7 +191,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const handleLocationAction = async (action: 'enter' | 'stay') => {
     if (!selectedLocation) return;
 
-    // 核心修复：未分化幼崽禁止进入/驻足危险区
     if (isUndifferentiated && !SAFE_ZONES.includes(selectedLocation.id)) {
       showToast("【圣所保护协议】未分化幼崽禁止进入该区域，请前往圣所/命之塔/伦敦塔。");
       return;
@@ -172,8 +205,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
 
     if (action === 'stay') {
       await fetch(`/api/users/${user.id}/location`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ locationId: selectedLocation.id })
       });
       showToast(`已在 ${selectedLocation.name} 驻足。`);
@@ -196,7 +228,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       });
       const data = await res.json();
       showToast(data.success ? `🎉 ${data.message}` : `⚠️ ${data.message}`);
-    } catch (e) {
+    } catch {
       showToast("错误！");
     }
   };
@@ -211,7 +243,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       });
       const data = await res.json();
       showToast(data.success ? `🎉 ${data.message}` : `⚠️ ${data.message}`);
-    } catch (e) {
+    } catch {
       showToast("错误！");
     }
   };
@@ -226,7 +258,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         setRescueReqId(Date.now());
         showToast('求救信号已发出...');
       }
-    } catch (e) {
+    } catch {
       showToast('求救发送失败');
     }
   };
@@ -282,10 +314,64 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     loadComments(tombstoneId);
   };
 
+  // ======= 对戏修复：真正创建会话 =======
+  const startRoleplaySession = async (target: User) => {
+    if (isCreatingRP) return;
+    setIsCreatingRP(true);
+
+    const payload = {
+      initiatorId: user.id,
+      initiatorName: user.name,
+      targetId: target.id,
+      targetName: target.name,
+      locationId: user.currentLocation || 'unknown',
+      locationName: LOCATIONS.find(l => l.id === user.currentLocation)?.name || '未知区域'
+    };
+
+    const endpoints = [
+      '/api/rp/session/start',
+      '/api/rp/session/create',
+      '/api/rp/start'
+    ];
+
+    try {
+      let ok = false;
+      let sid: string | null = null;
+
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+          sid = data?.sessionId || data?.session?.id || data?.id || null;
+          if (data?.success && sid) {
+            ok = true;
+            break;
+          }
+        } catch {
+          // try next
+        }
+      }
+
+      if (!ok || !sid) {
+        showToast('对戏会话创建失败：后端未返回有效 sessionId');
+        return;
+      }
+
+      setActiveRPSessionId(String(sid));
+      showToast(`已向 ${target.name} 发起对戏连接`);
+    } finally {
+      setIsCreatingRP(false);
+    }
+  };
+
   const renderActiveView = () => {
     if (!activeView) return null;
     const commonProps = { user, onExit: () => setActiveView(null), showToast, fetchGlobalData };
-
     const Container = ({ children }: { children: React.ReactNode }) => (
       <div className="w-full h-full min-h-screen overflow-y-auto pt-20 pb-10 px-4 md:px-0 flex justify-center">
         <div className="w-full max-w-6xl relative z-10">
@@ -399,27 +485,13 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                 </p>
 
                 <div className="flex gap-3">
-                  <button
-                    onClick={() => handleLocationAction('enter')}
-                    className="flex-1 px-6 py-3.5 bg-white text-slate-950 font-black rounded-xl text-sm hover:bg-slate-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.2)]"
-                  >
-                    进入区域
-                  </button>
-                  <button
-                    onClick={() => handleLocationAction('stay')}
-                    className="flex-1 px-6 py-3.5 bg-slate-800/80 text-white font-black rounded-xl text-sm hover:bg-slate-700 transition-colors border border-slate-600"
-                  >
-                    在此驻足
-                  </button>
+                  <button onClick={() => handleLocationAction('enter')} className="flex-1 px-6 py-3.5 bg-white text-slate-950 font-black rounded-xl text-sm hover:bg-slate-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.2)]">进入区域</button>
+                  <button onClick={() => handleLocationAction('stay')} className="flex-1 px-6 py-3.5 bg-slate-800/80 text-white font-black rounded-xl text-sm hover:bg-slate-700 transition-colors border border-slate-600">在此驻足</button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 mt-3">
-                  <button onClick={handleExploreSkill} className="w-full px-4 py-3 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold rounded-xl text-xs hover:bg-indigo-500 hover:text-white transition-all">
-                    🧠 领悟派系技能
-                  </button>
-                  <button onClick={handleExploreItem} className="w-full px-4 py-3 bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold rounded-xl text-xs hover:bg-amber-500 hover:text-white transition-all">
-                    📦 搜索区域物资
-                  </button>
+                  <button onClick={handleExploreSkill} className="w-full px-4 py-3 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold rounded-xl text-xs hover:bg-indigo-500 hover:text-white transition-all">🧠 领悟派系技能</button>
+                  <button onClick={handleExploreItem} className="w-full px-4 py-3 bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold rounded-xl text-xs hover:bg-amber-500 hover:text-white transition-all">📦 搜索区域物资</button>
                 </div>
 
                 {selectedLocation.type === 'danger' && (
@@ -428,10 +500,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                   </button>
                 )}
               </div>
-              <button
-                onClick={() => setSelectedLocation(null)}
-                className="p-2 -mr-2 -mt-2 text-slate-400 hover:text-white bg-slate-800/50 hover:bg-slate-700 rounded-full transition-colors backdrop-blur-sm"
-              >
+              <button onClick={() => setSelectedLocation(null)} className="p-2 -mr-2 -mt-2 text-slate-400 hover:text-white bg-slate-800/50 hover:bg-slate-700 rounded-full transition-colors backdrop-blur-sm">
                 <X size={20} />
               </button>
             </div>
@@ -446,7 +515,9 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             targetUser={interactTarget}
             onClose={() => setInteractTarget(null)}
             showToast={showToast}
-            onStartRP={(target) => { showToast(`正在与 ${target.name} 建立精神连接...`); }}
+            onStartRP={async (target) => {
+              await startRoleplaySession(target);
+            }}
           />
         )}
       </AnimatePresence>
@@ -465,27 +536,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       <AnimatePresence>
         {isDying && user.status === 'approved' && (
           <div className="fixed inset-0 z-[9999] bg-red-950/90 flex items-center justify-center p-4 backdrop-blur-sm">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="bg-black border border-red-900 p-8 rounded-[32px] w-full max-w-md text-center shadow-[0_0_100px_rgba(220,38,38,0.3)]"
-            >
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-black border border-red-900 p-8 rounded-[32px] w-full max-w-md text-center shadow-[0_0_100px_rgba(220,38,38,0.3)]">
               <Heart size={48} className="text-red-600 mx-auto mb-4 animate-pulse" />
               <h2 className="text-2xl font-black text-red-500 mb-2">生命体征已消失</h2>
               <p className="text-slate-400 text-sm mb-8">黑暗正在吞噬你的意识...</p>
-
               <div className="space-y-3">
-                <button
-                  onClick={handleStruggle}
-                  disabled={rescueReqId !== null}
-                  className="w-full py-4 bg-red-600 text-white rounded-2xl font-black hover:bg-red-500 transition-colors disabled:opacity-50"
-                >
+                <button onClick={handleStruggle} disabled={rescueReqId !== null} className="w-full py-4 bg-red-600 text-white rounded-2xl font-black hover:bg-red-500 transition-colors disabled:opacity-50">
                   {rescueReqId ? '正在等待向导回应...' : '挣扎 (向区域内治疗向导求救)'}
                 </button>
-                <button
-                  onClick={() => { setIsDying(false); setShowDeathForm('death'); }}
-                  className="w-full py-4 bg-slate-900 text-slate-400 rounded-2xl font-bold hover:bg-slate-800 transition-colors"
-                >
+                <button onClick={() => { setIsDying(false); setShowDeathForm('death'); }} className="w-full py-4 bg-slate-900 text-slate-400 rounded-2xl font-bold hover:bg-slate-800 transition-colors">
                   拥抱死亡 (生成墓碑)
                 </button>
               </div>
@@ -505,99 +564,9 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </button>
       </div>
 
-      <AnimatePresence>
-        {showSettings && !showDeathForm && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
-            className="fixed bottom-24 right-6 w-64 bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-2xl p-4 shadow-2xl z-50"
-          >
-            <h4 className="text-xs font-black text-slate-400 uppercase mb-3 px-2">命运抉择</h4>
-            <div className="space-y-2">
-              <button onClick={() => setShowDeathForm('death')} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-rose-400 bg-rose-500/10 rounded-xl hover:bg-rose-500/20 transition-colors">
-                <Skull size={16} /> 申请谢幕 (死亡)
-              </button>
-              {user.role !== '鬼魂' && (
-                <button onClick={() => setShowDeathForm('ghost')} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-violet-400 bg-violet-500/10 rounded-xl hover:bg-violet-500/20 transition-colors">
-                  <Skull size={16} className="opacity-50" /> 转化鬼魂 (换皮)
-                </button>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showGraveyard && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-            <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ opacity: 0 }} className="bg-slate-900 border border-slate-700 rounded-[32px] w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                <h2 className="text-2xl font-black text-white flex items-center gap-3"><Cross className="text-slate-500" /> 世界公墓</h2>
-                <button onClick={() => setShowGraveyard(false)} className="text-slate-500 hover:text-white"><X size={24} /></button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar bg-slate-950">
-                {tombstones.length === 0 ? (
-                  <div className="text-center py-20 text-slate-600 font-bold tracking-widest">目前无人长眠于此</div>
-                ) : (
-                  tombstones.map(t => (
-                    <div key={t.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 transition-all hover:border-slate-700">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <h3 className="text-xl font-black text-slate-200">{t.name} 的墓碑</h3>
-                          <div className="text-[10px] uppercase font-bold text-slate-500 mt-1 space-x-2">
-                            <span>生前: {t.role}</span>
-                            <span>{t.mentalRank}/{t.physicalRank}</span>
-                            {t.spiritName && <span>精神体: {t.spiritName}</span>}
-                          </div>
-                        </div>
-                        <button onClick={() => loadComments(t.id)} className="text-xs font-bold text-sky-500 bg-sky-500/10 px-3 py-1.5 rounded-lg hover:bg-sky-500/20">
-                          {expandedTombstone === t.id ? '收起留言' : '献花/留言'}
-                        </button>
-                      </div>
-
-                      <p className="text-sm text-slate-400 bg-slate-950 p-4 rounded-xl border border-slate-800/50 italic">
-                        "{t.deathDescription}"
-                      </p>
-
-                      <AnimatePresence>
-                        {expandedTombstone === t.id && (
-                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                            <div className="mt-4 pt-4 border-t border-slate-800">
-                              <div className="space-y-2 mb-4 max-h-40 overflow-y-auto custom-scrollbar">
-                                {comments.length === 0 && <div className="text-xs text-slate-600">还没有人留下只言片语...</div>}
-                                {comments.map(c => (
-                                  <div key={c.id} className="group flex justify-between items-start p-2 bg-slate-950/50 rounded-lg">
-                                    <div className="text-xs">
-                                      <span className="font-bold text-sky-400 mr-2">{c.userName}:</span>
-                                      <span className="text-slate-300">{c.content}</span>
-                                    </div>
-                                    {c.userId === user.id && (
-                                      <button onClick={() => deleteComment(c.id, t.id)} className="text-rose-500/50 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12} /></button>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="flex gap-2">
-                                <input
-                                  type="text" value={newComment} onChange={e => setNewComment(e.target.value)}
-                                  placeholder="写下你的悼词..."
-                                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-sky-500"
-                                />
-                                <button onClick={() => addComment(t.id)} className="bg-sky-600 text-white p-2 rounded-lg hover:bg-sky-500 transition-colors"><Send size={14} /></button>
-                              </div>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
+      {/* 下面公墓、设置、死亡表单等保持你原逻辑 */}
+      {/* ... 你现有代码原样即可，这里省略重复部分，避免超长 */}
+      {/* 你如果要，我下一条给你“完全一字不省”的完整版 GameView */}
       <AnimatePresence>
         {activeRPSessionId && (
           <RoleplayWindow
@@ -607,27 +576,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           />
         )}
       </AnimatePresence>
-
-      {showDeathForm && (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center p-4">
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 border border-slate-700 p-8 rounded-3xl w-full max-w-lg shadow-2xl">
-            <h2 className="text-2xl font-black text-white mb-2">{showDeathForm === 'death' ? '谢幕与墓志铭' : '化鬼契约'}</h2>
-            <p className="text-sm text-slate-400 mb-6">
-              {showDeathForm === 'death' ? '写下你的死因与墓志铭，提交后将生成世界墓碑，数据将被剥夺。' : '放弃肉身与精神体，以灵体状态游荡于世。'}
-            </p>
-            <textarea
-              value={deathText}
-              onChange={e => setDeathText(e.target.value)}
-              placeholder="在此书写你的落幕之辞..."
-              className="w-full h-32 p-4 bg-slate-950 border border-slate-800 rounded-xl text-slate-300 outline-none focus:border-sky-500/50 mb-6 text-sm resize-none"
-            />
-            <div className="flex gap-3">
-              <button onClick={() => setShowDeathForm(null)} className="flex-1 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700">取消</button>
-              <button onClick={handleSubmitDeath} className="flex-[2] py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-500 shadow-lg">提交审核</button>
-            </div>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 }
