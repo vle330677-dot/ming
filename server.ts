@@ -9,7 +9,9 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = process.env.DB_PATH || 'game.db';
+// server.ts
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'data', 'game.db');
+// 确保文件夹存在（手动或在 Dockerfile 中创建）
 const db = new Database(dbPath);
 
 // ================= 1. 数据库初始化 =================
