@@ -45,7 +45,9 @@ db.exec(`
     password TEXT,
     roomBgImage TEXT,
     roomDescription TEXT,
-    allowVisit INTEGER DEFAULT 1
+    allowVisit INTEGER DEFAULT 1,
+    fury INTEGER DEFAULT 0,
+    partyId TEXT DEFAULT NULL
   );
 
   CREATE TABLE IF NOT EXISTS rescue_requests (
@@ -161,7 +163,7 @@ const addColumn = (table: string, col: string, type: string) => {
   }
 };
 
-['age', 'hp', 'maxHp', 'mp', 'maxMp', 'workCount', 'trainCount'].forEach((c) =>
+['age', 'hp', 'maxHp', 'mp', 'maxMp', 'workCount', 'trainCount', 'fury'].forEach((c) =>
   addColumn('users', c, 'INTEGER DEFAULT 0')
 );
 [
@@ -182,7 +184,8 @@ const addColumn = (table: string, col: string, type: string) => {
   'lastCheckInDate',
   'password',
   'roomBgImage',
-  'roomDescription'
+  'roomDescription',
+  'partyId'
 ].forEach((c) => addColumn('users', c, 'TEXT'));
 addColumn('users', 'isHidden', 'INTEGER DEFAULT 0');
 addColumn('users', 'mentalProgress', 'REAL DEFAULT 0');
@@ -222,100 +225,45 @@ seedData();
 
 // ================= 3. 辅助配置 =================
 const JOB_SALARIES: Record<string, number> = {
-  '圣子/圣女': 5000,
-  侍奉者: 1000,
-  候选者: 3000,
-  仆从: 500,
-  // === 新增：伦敦塔职位 ===
-  伦敦塔教师: 800,      // 设定薪资 800g
-  伦敦塔职工: 400,      // 设定薪资 300-500g，取中间值
-  伦敦塔学员: 100,      // 给学生一点生活津贴，鼓励玩法
-  // === 新增：圣所职位 ===
-  圣所保育员: 500,     // 设定薪资 500g
-  圣所职工: 250,       // 设定薪资 200-300g，取中间值
-  圣所幼崽: 50,        // 每月发糖果钱
-  // === 新增：公会职位 ===
-  公会会长: 2000,      // 富可敌国，掌管地下交易
-  公会成员: 600,       // 有编制的成员，福利不错
-  冒险者: 0,           // 自由职业，全靠做任务赚赏金(Commission)
-  // === 新增：军队职位 (按军衔阶级) ===
-  军队将官: 1500,      // 荣耀与权力的顶端
-  军队校官: 1000,      // 中流砥柱
-  军队尉官: 800,       // 基层指挥
-  军队士兵: 500,       // 刚入伍的新兵，包吃包住
-  // === 新增：西区（贫民区）职位 ===
-  西区市长: 1200,      // 管理这片混乱之地不容易
-  西区副市长: 800,
-  西区技工: 300,       // 也就是西区平民，靠手艺吃饭，底薪低但能搓零件
-
-  // === 新增：东区（富人区）职位 (预告) ===
-  东区市长: 3000,      // 富得流油
-  东区副市长: 1500,
-  东区贵族: 1000,      // 也就是东区平民，什么都不干也有钱拿
-// === 新增：守塔会职位 ===
-  守塔会会长: 2500,     // 权势滔天，甚至妄图掌控塔
-  守塔会成员: 700,      // 类似公务员/神职人员，待遇稳定
-  // === 新增：恶魔会职位 ===
-  恶魔会会长: 1800,     // 混乱之王
-  恶魔会成员: 0,        // 没工资，全靠抢（或者叫“战利品分配”）
-  // === 新增：灵异管理所职位 ===
-  灵异所所长: 2500,     // 神秘的管理者
-  搜捕队队长: 1500,     // 带队抓鬼
-  搜捕队队员: 1000,     // 一线干员，工资不错
-  灵异所文员: 1000,     // 坐办公室处理档案
-  // === 新增：观察者职位 ===
-  观察者首领: 3000,     // 掌握世界秘密的人
-  情报搜集员: 800,      // 外勤，搞事情
-  情报处理员: 800       // 内勤，造假与审定
+  '圣子/圣女': 5000, 侍奉者: 1000, 候选者: 3000, 仆从: 500,
+  伦敦塔教师: 800, 伦敦塔职工: 400, 伦敦塔学员: 100,
+  圣所保育员: 500, 圣所职工: 250, 圣所幼崽: 50,
+  公会会长: 2000, 公会成员: 600, 冒险者: 0,
+  军队将官: 1500, 军队校官: 1000, 军队尉官: 800, 军队士兵: 500,
+  西区市长: 1200, 西区副市长: 800, 西区技工: 300,
+  东区市长: 3000, 东区副市长: 1500, 东区贵族: 1000,
+  守塔会会长: 2500, 守塔会成员: 700,
+  恶魔会会长: 1800, 恶魔会成员: 0,
+  灵异所所长: 2500, 搜捕队队长: 1500, 搜捕队队员: 1000, 灵异所文员: 1000,
+  观察者首领: 3000, 情报搜集员: 800, 情报处理员: 800
 };
 
 const JOB_LIMITS: Record<string, number> = {
-  '圣子/圣女': 1,
-  侍奉者: 2,
-  候选者: 3,
-  仆从: 99999,
-  // === 新增：伦敦塔职位限制 ===
-  伦敦塔教师: 100,
-  伦敦塔职工: 200,
-  伦敦塔学员: 9999,
-  // === 新增：圣所职位限制 ===
-  圣所保育员: 8,       // 老师不用太多
-  圣所职工: 150,
-  圣所幼崽: 9999,
-  // === 新增：公会职位限制 ===
-  公会会长: 1,
-  公会成员: 50,
-  冒险者: 9999,        // 门槛最低，人数最多
-  
-  // === 新增：军队职位限制 ===
-  军队将官: 3,         // 极稀有
-  军队校官: 10,
-  军队尉官: 30,
-  军队士兵: 9999,
-  // === 新增：西区职位限制 ===
-  西区市长: 1,
-  西区副市长: 2,
-  西区技工: 9999,
-  
-  // === 新增：东区职位限制 ===
-  东区市长: 1,
-  东区副市长: 2,
-  东区贵族: 9999,
-  // === 新增：守塔会职位限制 ===
-  守塔会会长: 1,
-  守塔会成员: 200,      // 规模较大的组织
-  // === 新增：恶魔会职位限制 ===
-  恶魔会会长: 1,
-  恶魔会成员: 9999,     // 来者不拒
-  // === 新增：灵异管理所职位限制 ===
-  灵异所所长: 1,
-  搜捕队队长: 10,       // 需带队
-  搜捕队队员: 50,
-  灵异所文员: 20,
-  // === 新增：观察者职位限制 ===
-  观察者首领: 1,
-  情报搜集员: 9999,
-  情报处理员: 9999
+  '圣子/圣女': 1, 侍奉者: 2, 候选者: 3, 仆从: 99999,
+  伦敦塔教师: 100, 伦敦塔职工: 200, 伦敦塔学员: 9999,
+  圣所保育员: 8, 圣所职工: 150, 圣所幼崽: 9999,
+  公会会长: 1, 公会成员: 50, 冒险者: 9999,
+  军队将官: 3, 军队校官: 10, 军队尉官: 30, 军队士兵: 9999,
+  西区市长: 1, 西区副市长: 2, 西区技工: 9999,
+  东区市长: 1, 东区副市长: 2, 东区贵族: 9999,
+  守塔会会长: 1, 守塔会成员: 200,
+  恶魔会会长: 1, 恶魔会成员: 9999,
+  灵异所所长: 1, 搜捕队队长: 10, 搜捕队队员: 50, 灵异所文员: 20,
+  观察者首领: 1, 情报搜集员: 9999, 情报处理员: 9999
+};
+
+// 16-19岁强制降级映射表
+const LOWEST_JOBS_MAP: Record<string, string> = {
+  '圣子/圣女': '仆从', '侍奉者': '仆从', '候选者': '仆从', '仆从': '仆从',
+  '军队将官': '军队士兵', '军队校官': '军队士兵', '军队尉官': '军队士兵', '军队士兵': '军队士兵',
+  '公会会长': '冒险者', '公会成员': '冒险者', '冒险者': '冒险者',
+  '守塔会会长': '守塔会成员', '守塔会成员': '守塔会成员',
+  '灵异所所长': '灵异所文员', '搜捕队队长': '灵异所文员', '搜捕队队员': '灵异所文员', '灵异所文员': '灵异所文员',
+  '观察者首领': '情报处理员', '情报搜集员': '情报处理员', '情报处理员': '情报处理员',
+  '恶魔会会长': '恶魔会成员', '恶魔会成员': '恶魔会成员',
+  '东区市长': '东区贵族', '东区副市长': '东区贵族', '东区贵族': '东区贵族',
+  '西区市长': '西区技工', '西区副市长': '西区技工', '西区技工': '西区技工',
+  '圣所保育员': '圣所职工', '圣所职工': '圣所职工',
 };
 
 // 本地日期（避免 UTC 偏差）
@@ -362,6 +310,83 @@ async function startServer() {
 
   // ================= 5. 游戏前端核心 API =================
 
+  // --- 狂暴值系统：战斗增加 ---
+  app.post('/api/combat/end', (req, res) => {
+    const { userId } = req.body;
+    // 简单的战斗逻辑：只要战斗，狂暴值+20 (上限100)
+    db.prepare('UPDATE users SET fury = MIN(100, fury + 20) WHERE id = ?').run(userId);
+    res.json({ success: true, message: '战斗结束，精神狂暴值上升了 20%！' });
+  });
+
+  // --- 狂暴值系统：向导抚慰 ---
+  app.post('/api/guide/soothe', (req, res) => {
+    const { sentinelId, guideId } = req.body;
+    
+    const sentinel = db.prepare('SELECT name, fury FROM users WHERE id = ?').get(sentinelId) as any;
+    const guide = db.prepare('SELECT name FROM users WHERE id = ?').get(guideId) as any;
+
+    if (!sentinel || !guide) return res.json({ success: false, message: '用户不存在' });
+
+    // 1. 计算契合度 (复用前端算法保证一致)
+    const str = sentinel.name < guide.name ? sentinel.name + guide.name : guide.name + sentinel.name;
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    const compatibility = Math.abs(hash % 101);
+
+    // 2. 判定减少数值
+    let reduceAmount = 0;
+    if (compatibility <= 30) reduceAmount = 10;
+    else if (compatibility <= 70) reduceAmount = 30;
+    else reduceAmount = 60;
+
+    // 3. 执行更新
+    const newFury = Math.max(0, (sentinel.fury || 0) - reduceAmount);
+    db.prepare('UPDATE users SET fury = ? WHERE id = ?').run(newFury, sentinelId);
+
+    res.json({ 
+      success: true, 
+      compatibility, 
+      reduced: reduceAmount,
+      currentFury: newFury,
+      message: `契合度 ${compatibility}%，狂暴值净化了 ${reduceAmount}%` 
+    });
+  });
+
+  // --- 技能管理：删除技能 ---
+  app.delete('/api/users/:userId/skills/:skillId', (req, res) => {
+    db.prepare('DELETE FROM user_skills WHERE id = ? AND userId = ?').run(req.params.skillId, req.params.userId);
+    res.json({ success: true });
+  });
+
+  // --- 技能管理：技能合并/升阶 ---
+  app.post('/api/users/:userId/skills/merge', (req, res) => {
+    const { skillName } = req.body;
+    const userId = req.params.userId;
+    
+    // 检查是否有至少2个同名技能用于合并
+    const skills = db.prepare('SELECT * FROM user_skills WHERE userId = ? AND name = ?').all(userId, skillName) as any[];
+    
+    if (skills.length < 2) {
+      return res.json({ success: false, message: '需要至少2个同名技能才能进行融合升阶。' });
+    }
+
+    // 简单的合并逻辑：删除前两个，生成一个新的高级版（或者等级+1）
+    const id1 = skills[0].id;
+    const id2 = skills[1].id;
+    const newLevel = (skills[0].level || 1) + 1;
+
+    const deleteStmt = db.prepare('DELETE FROM user_skills WHERE id IN (?, ?)');
+    const insertStmt = db.prepare('INSERT INTO user_skills (userId, name, level) VALUES (?, ?, ?)');
+
+    const transaction = db.transaction(() => {
+      deleteStmt.run(id1, id2);
+      insertStmt.run(userId, skillName, newLevel);
+    });
+    transaction();
+
+    res.json({ success: true, message: `融合成功！${skillName} 提升到了 Lv.${newLevel}` });
+  });
+
   // --- 精神力训练系统 ---
   app.post('/api/training/complete', (req, res) => {
     const { userId } = req.body;
@@ -372,12 +397,10 @@ async function startServer() {
       
       if (!user) return res.json({ success: false, message: '用户不存在' });
       
-      // 再次校验次数（防止前端作弊）
       if (user.trainCount >= 3 && user.lastResetDate === today) {
         return res.json({ success: false, message: '今日精神力训练次数已耗尽' });
       }
 
-      // 计算新进度 (当前 + 5%，上限 100)
       const newProgress = Math.min(100, (user.mentalProgress || 0) + 5);
 
       db.prepare(`
@@ -480,7 +503,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 管理员删除（级联）
   app.delete('/api/admin/users/:id', (req, res) => {
     const userId = Number(req.params.id);
     if (!Number.isFinite(userId)) return res.status(400).json({ success: false, message: '无效用户ID' });
@@ -493,7 +515,6 @@ async function startServer() {
     }
   });
 
-  // 普通删除（供 LoginView rejected 分支调用）
   app.delete('/api/users/:id', (req, res) => {
     const userId = Number(req.params.id);
     if (!Number.isFinite(userId)) return res.status(400).json({ success: false, message: '无效用户ID' });
@@ -513,23 +534,13 @@ async function startServer() {
        SET role=?, age=?, faction=?, mentalRank=?, physicalRank=?, ability=?, spiritName=?, profileText=?, status=?, password=?
        WHERE id=?`
     ).run(
-      role,
-      age,
-      faction,
-      mentalRank,
-      physicalRank,
-      ability,
-      spiritName,
-      profileText,
-      status || 'approved',
-      password || null,
-      req.params.id
+      role, age, faction, mentalRank, physicalRank, ability,
+      spiritName, profileText, status || 'approved', password || null, req.params.id
     );
 
     res.json({ success: true });
   });
 
-  // ========== 个人房间与设置接口 ==========
   app.put('/api/users/:id/settings', (req, res) => {
     const { roomBgImage, roomDescription, allowVisit, password } = req.body;
     db.prepare(`
@@ -537,11 +548,7 @@ async function startServer() {
        SET roomBgImage=?, roomDescription=?, allowVisit=?, password=? 
        WHERE id=?
     `).run(
-      roomBgImage || null, 
-      roomDescription || null, 
-      allowVisit ? 1 : 0, 
-      password || null, 
-      req.params.id
+      roomBgImage || null, roomDescription || null, allowVisit ? 1 : 0, password || null, req.params.id
     );
     res.json({ success: true });
   });
@@ -569,7 +576,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // --- 玩家基础信息 ---
   app.get('/api/users/:name', (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE name = ?').get(req.params.name) as any;
     if (!user) return res.json({ success: false, message: 'User not found' });
@@ -597,14 +603,15 @@ async function startServer() {
     }
   });
 
+  // 更新用户信息（抽取后保存）
   app.post('/api/users', (req, res) => {
-    const { name, role, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
+    const { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
     try {
       db.prepare(`
         UPDATE users
-        SET role=?, mentalRank=?, physicalRank=?, gold=?, ability=?, spiritName=?, spiritType=?, status='pending'
+        SET role=?, age=?, mentalRank=?, physicalRank=?, gold=?, ability=?, spiritName=?, spiritType=?, status='pending'
         WHERE name=?
-      `).run(role, mentalRank, physicalRank, gold, ability, spiritName, spiritType, name);
+      `).run(role, age || 18, mentalRank, physicalRank, gold, ability, spiritName, spiritType, name);
 
       res.json({ success: true });
     } catch (e: any) {
@@ -622,7 +629,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // --- 背包系统 ---
   app.get('/api/users/:id/inventory', (req, res) => {
     const items = db.prepare('SELECT * FROM user_inventory WHERE userId = ?').all(req.params.id);
     res.json({ success: true, items });
@@ -641,7 +647,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // --- 商店系统 ---
   app.get('/api/market/goods', (_req, res) => {
     const goods = db.prepare('SELECT * FROM global_items WHERE price > 0').all();
     res.json({ success: true, goods });
@@ -670,7 +675,6 @@ async function startServer() {
     }
   });
 
-  // --- 拍卖行系统 ---
   app.get('/api/auction/items', (_req, res) => {
     const items = db.prepare("SELECT * FROM auction_items WHERE status = 'active'").all();
     res.json({ success: true, items });
@@ -718,7 +722,6 @@ async function startServer() {
     }
   });
 
-  // --- 技能与精神体 ---
   app.get('/api/skills/available/:userId', (req, res) => {
     const user = db.prepare('SELECT faction, age FROM users WHERE id = ?').get(req.params.userId) as any;
     if (!user) return res.status(404).json({ success: false });
@@ -773,21 +776,36 @@ async function startServer() {
     res.json({ success: true, levelUp: levelGain > 0 });
   });
 
-  // --- 命之塔职场 ---
+  // --- 入职与系统判定 ---
   app.post('/api/tower/join', (req, res) => {
     const { userId, jobName } = req.body;
     try {
-      const user = db.prepare('SELECT job FROM users WHERE id = ?').get(userId) as any;
+      const user = db.prepare('SELECT job, age FROM users WHERE id = ?').get(userId) as any;
       if (!user) return res.json({ success: false, message: '用户不存在' });
       if (user.job && user.job !== '无') return res.json({ success: false, message: '已有职位' });
 
-      const currentCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE job = ?').get(jobName) as any;
-      if (currentCount.count >= (JOB_LIMITS[jobName] || 0)) {
+      // 未成年拦截
+      if (user.age < 16 && jobName !== '圣所幼崽') {
+         return res.json({ success: false, message: '未分化者无法执行该操作' });
+      }
+
+      let finalJob = jobName;
+      // 16-19岁强制降级逻辑 (除了学员外，统一打回基层)
+      if (user.age >= 16 && user.age <= 19) {
+        if (finalJob === '伦敦塔教师' || finalJob === '伦敦塔职工') {
+          finalJob = '伦敦塔学员';
+        } else if (LOWEST_JOBS_MAP[finalJob]) {
+          finalJob = LOWEST_JOBS_MAP[finalJob];
+        }
+      }
+
+      const currentCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE job = ?').get(finalJob) as any;
+      if (currentCount.count >= (JOB_LIMITS[finalJob] || 0)) {
         return res.json({ success: false, message: '该职位名额已满。' });
       }
 
-      db.prepare('UPDATE users SET job = ? WHERE id = ?').run(jobName, userId);
-      res.json({ success: true });
+      db.prepare('UPDATE users SET job = ? WHERE id = ?').run(finalJob, userId);
+      res.json({ success: true, job: finalJob });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -850,7 +868,6 @@ async function startServer() {
     }
   });
 
-  // --- 对戏与委托 ---
   app.post('/api/roleplay', (req, res) => {
     const { senderId, senderName, receiverId, receiverName, content, locationId } = req.body;
     db.prepare(
@@ -899,7 +916,6 @@ async function startServer() {
   });
   
   app.put('/api/commissions/:id/release', (req, res) => {
-    // 释放锁定，允许别人接取
     db.prepare('UPDATE commissions SET status = "open", acceptedById = NULL, acceptedByName = NULL WHERE id = ?')
       .run(req.params.id);
     res.json({ success: true });
@@ -909,9 +925,7 @@ async function startServer() {
     const { userId } = req.body;
     const commissionId = req.params.id;
 
-    // 给军队调解员发 1000G
     db.prepare('UPDATE users SET gold = gold + 1000 WHERE id = ?').run(userId);
-    // 将委托标记为完成或删除
     db.prepare('DELETE FROM commissions WHERE id = ?').run(commissionId);
 
     res.json({ success: true });

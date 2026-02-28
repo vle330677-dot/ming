@@ -12,7 +12,8 @@ import {
   XCircle,
   Edit3,
   ShieldAlert,
-  Users
+  Users,
+  Filter
 } from 'lucide-react';
 
 type AdminTab = 'users' | 'logs' | 'items' | 'skills';
@@ -40,7 +41,13 @@ interface AdminUser {
   currentLocation?: string;
   status: UserStatus;
   deathDescription?: string;
-  password?: string; // 新增：密码字段
+  password?: string;
+}
+
+interface UserSkill {
+  id: number;
+  name: string;
+  level: number;
 }
 
 interface RoleplayLog {
@@ -98,7 +105,12 @@ export function AdminView() {
   const [skills, setSkills] = useState<GlobalSkill[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // 编辑用户状态
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [editingUserSkills, setEditingUserSkills] = useState<UserSkill[]>([]); // 新增：当前编辑用户的技能
+
+  // 技能库筛选状态
+  const [skillFactionFilter, setSkillFactionFilter] = useState('ALL');
 
   const [newItem, setNewItem] = useState({
     name: '',
@@ -117,6 +129,15 @@ export function AdminView() {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  // 当打开编辑窗口时，拉取该用户的技能
+  useEffect(() => {
+    if (editingUser) {
+      fetchUserSkills(editingUser.id);
+    } else {
+      setEditingUserSkills([]);
+    }
+  }, [editingUser]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -142,10 +163,21 @@ export function AdminView() {
     }
   };
 
+  const fetchUserSkills = async (userId: number) => {
+    try {
+      const res = await fetch(`/api/users/${userId}/skills`);
+      const data = await res.json();
+      if (data.success) {
+        setEditingUserSkills(data.skills);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // ============ 用户管理 ============
   const handleStatusChange = async (id: number, status: UserStatus, userObj?: AdminUser) => {
     try {
-      // pending_ghost -> approved: 需要改 role / physicalRank
       if (status === 'approved' && userObj?.status === 'pending_ghost') {
         await fetch(`/api/admin/users/${id}`, {
           method: 'PUT',
@@ -191,6 +223,18 @@ export function AdminView() {
     fetchData();
   };
 
+  const handleDeleteUserSkill = async (skillId: number) => {
+    if (!editingUser) return;
+    if (!confirm('确定要遗忘该技能吗？')) return;
+    try {
+      await fetch(`/api/users/${editingUser.id}/skills/${skillId}`, { method: 'DELETE' });
+      // 刷新列表
+      fetchUserSkills(editingUser.id);
+    } catch (e) {
+      alert('删除失败');
+    }
+  };
+
   // ============ 物品与技能 ============
   const addItem = async () => {
     if (!newItem.name.trim() || !newItem.locationTag.trim()) {
@@ -230,6 +274,12 @@ export function AdminView() {
       return acc;
     }, {});
   }, [logs]);
+
+  // 过滤后的技能列表
+  const filteredSkills = useMemo(() => {
+    if (skillFactionFilter === 'ALL') return skills;
+    return skills.filter(s => s.faction === skillFactionFilter);
+  }, [skills, skillFactionFilter]);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-8 font-sans text-slate-800">
@@ -533,25 +583,41 @@ export function AdminView() {
                 </div>
               </div>
 
-              <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {skills.map((s) => (
-                  <div key={s.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative group hover:border-sky-300 transition-colors">
-                    <button
-                      onClick={() => {
-                        if (confirm('确定删除该技能？')) fetch(`/api/admin/skills/${s.id}`, { method: 'DELETE' }).then(fetchData);
-                      }}
-                      className="absolute top-6 right-6 text-slate-200 hover:text-rose-500 transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                    <div className="inline-block px-2.5 py-1 bg-sky-50 text-sky-600 rounded-lg text-[10px] font-black uppercase tracking-widest mb-3">
-                      {s.faction || '未分类'}
+              <div className="lg:col-span-2 space-y-4">
+                {/* 技能筛选栏 */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center gap-4 shadow-sm">
+                  <Filter size={16} className="text-slate-400"/>
+                  <span className="text-xs font-bold text-slate-500">技能库筛选:</span>
+                  <select 
+                    value={skillFactionFilter} 
+                    onChange={e => setSkillFactionFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20"
+                  >
+                    <option value="ALL">全部派系 (ALL)</option>
+                    {FACTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {filteredSkills.map((s) => (
+                    <div key={s.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative group hover:border-sky-300 transition-colors">
+                      <button
+                        onClick={() => {
+                          if (confirm('确定删除该技能？')) fetch(`/api/admin/skills/${s.id}`, { method: 'DELETE' }).then(fetchData);
+                        }}
+                        className="absolute top-6 right-6 text-slate-200 hover:text-rose-500 transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                      <div className="inline-block px-2.5 py-1 bg-sky-50 text-sky-600 rounded-lg text-[10px] font-black uppercase tracking-widest mb-3">
+                        {s.faction || '未分类'}
+                      </div>
+                      <div className="font-black text-lg text-slate-900 mb-2">{s.name}</div>
+                      <p className="text-xs text-slate-500 leading-relaxed">{s.description || '暂无描述'}</p>
                     </div>
-                    <div className="font-black text-lg text-slate-900 mb-2">{s.name}</div>
-                    <p className="text-xs text-slate-500 leading-relaxed">{s.description || '暂无描述'}</p>
-                  </div>
-                ))}
-                {skills.length === 0 && <div className="text-slate-400 text-sm">暂无技能数据</div>}
+                  ))}
+                  {filteredSkills.length === 0 && <div className="text-slate-400 text-sm p-4 text-center">该分类下暂无技能数据</div>}
+                </div>
               </div>
             </div>
           )}
@@ -593,7 +659,7 @@ export function AdminView() {
                 <Input label="肉体强度等级" value={editingUser.physicalRank || ''} onChange={(v: string) => setEditingUser({ ...editingUser, physicalRank: v })} />
                 <Input label="精神体名称" value={editingUser.spiritName || ''} onChange={(v: string) => setEditingUser({ ...editingUser, spiritName: v })} />
                 
-                {/* 新增：账号安全锁密码输入框 */}
+                {/* 账号安全锁密码输入框 */}
                 <Input 
                   label="全局账号密码 (留空即无密码)" 
                   value={editingUser.password || ''} 
@@ -608,6 +674,39 @@ export function AdminView() {
                     onChange={(e) => setEditingUser({ ...editingUser, profileText: e.target.value })}
                   />
                 </div>
+              </div>
+
+              {/* 技能管理区域 */}
+              <div className="mt-8 pt-8 border-t border-slate-100">
+                <h4 className="font-black text-slate-800 mb-4 flex items-center gap-2">
+                  <Zap size={16} className="text-indigo-500" /> 
+                  玩家已习得技能 
+                  <span className="text-xs font-normal text-slate-400 ml-2">({editingUserSkills.length})</span>
+                </h4>
+                
+                {editingUserSkills.length === 0 ? (
+                  <div className="p-4 bg-slate-50 rounded-2xl text-xs text-slate-400 text-center border border-dashed border-slate-200">
+                    该玩家尚未习得任何技能
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 max-h-40 overflow-y-auto custom-scrollbar p-1">
+                    {editingUserSkills.map(skill => (
+                      <div key={skill.id} className="flex justify-between items-center p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl">
+                        <div>
+                          <div className="font-bold text-sm text-indigo-900">{skill.name}</div>
+                          <div className="text-[10px] font-black text-amber-500 uppercase">Lv.{skill.level}</div>
+                        </div>
+                        <button 
+                          onClick={() => handleDeleteUserSkill(skill.id)}
+                          className="p-1.5 bg-white text-slate-400 hover:text-rose-500 rounded-lg shadow-sm border border-slate-100 transition-colors"
+                          title="遗忘/删除此技能"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="mt-8 flex gap-4">
