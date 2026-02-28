@@ -320,97 +320,58 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   };
 
   return (
-    <div className="fixed inset-0 overflow-hidden font-sans select-none text-slate-100">
+    <div className="fixed inset-0 overflow-hidden font-sans select-none text-slate-100 bg-slate-950">
       
-      {/* 1. 全局背景层：负责大地图与小地图的平滑切换 */}
-      <div className="absolute inset-0 z-0 bg-slate-950">
-         {/* 动态背景图片层 */}
+      {/* 1. 动态背景层： public 目录图片 */}
+      <div className="absolute inset-0 z-0">
          <motion.div
-            key={currentBackgroundImage}
-            initial={{ opacity: 0, scale: 1.05 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.8 }}
-            className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+            key={activeView || 'world_map'}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="absolute inset-0 bg-cover bg-center transition-all duration-700"
             style={{ 
-              backgroundImage: `url(${currentBackgroundImage})`,
-              filter: activeView ? 'brightness(0.8) blur(0px)' : 'brightness(0.6) blur(2px)'
+              backgroundImage: `url(${activeView ? LOCATION_BG_MAP[activeView] : '/map_background.jpg'})`,
+              filter: activeView ? 'brightness(0.4) blur(4px)' : 'brightness(0.6)'
             }}
          />
-         {/* 遮罩层，保证文字可读性 */}
-         <div className={`absolute inset-0 transition-colors duration-700 ${activeView ? 'bg-slate-950/30' : 'bg-slate-950/50'}`} />
       </div>
 
-      {/* 2. HUD 始终位于最上层 */}
-      <div className="relative z-50">
-         <CharacterHUD user={user} onLogout={onLogout} />
-      </div>
+      {/* 2. HUD：适配移动端可折叠 */}
+      <CharacterHUD user={user} onLogout={onLogout} />
 
-      {/* 3. 主内容区域切换 */}
+      {/* 3. 地图容器：手机端保持比例，电脑端居中 */}
       <AnimatePresence mode="wait">
-        
-        {/* === 模式A: 交互式世界大地图 (Big Map) === */}
         {!activeView && (
           <motion.div 
-            key="big-map"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.05 }}
-            transition={{ duration: 0.5 }}
-            className="relative w-full h-full flex items-center justify-center p-0 md:p-8 z-10"
+            className="relative w-full h-full flex items-center justify-center p-2 md:p-8 z-10"
           >
-            <div className="relative aspect-video w-full max-w-[170vh] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden rounded-xl md:rounded-[2rem] border border-slate-700/50 bg-slate-900 group">
+            <div className="relative aspect-[16/9] w-full max-w-[1200px] bg-slate-900/50 rounded-2xl md:rounded-[2rem] border border-white/10 overflow-hidden shadow-2xl">
+              <img src="/map_background.jpg" className="w-full h-full object-cover opacity-80" />
               
-              <img 
-                src="/map_background.jpg" 
-                className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-90 group-hover:scale-105 transition-transform duration-[10s] ease-linear" 
-                alt="World Map" 
-              />
-              
-              {/* 网格装饰线 */}
-              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none"></div>
-              
-              {/* 地点标记层 */}
-              <div className="absolute inset-0 z-10">
-                {LOCATIONS.map(loc => (
-                  <div 
-                    key={loc.id}
-                    className="absolute transform -translate-x-1/2 -translate-y-1/2 group/pin cursor-pointer"
-                    style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
-                    onClick={() => setSelectedLocation(loc)}
-                  >
-                    {user.currentLocation === loc.id && (
-                      <div className="absolute -inset-8 bg-sky-500/30 rounded-full animate-ping pointer-events-none"></div>
-                    )}
-                    
-                    {/* 标记点图标 */}
-                    <div className={`relative w-4 h-4 md:w-8 md:h-8 rounded-full border-2 shadow-[0_0_20px_rgba(0,0,0,0.8)] transition-all duration-300 flex items-center justify-center backdrop-blur-sm
-                      ${user.currentLocation === loc.id 
-                        ? 'bg-sky-500 border-white scale-110 shadow-sky-500/80' 
-                        : 'bg-slate-900/80 border-slate-400 hover:bg-white hover:scale-125 hover:border-white'
-                      }`}
-                    >
-                      {user.currentLocation === loc.id ? <Navigation size={14} className="text-white fill-white"/> : <div className="w-1.5 h-1.5 rounded-full bg-white/50"/>}
-                    </div>
-
-                    {/* 地名标签 */}
-                    <div className={`absolute top-8 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/50 rounded-lg text-[10px] md:text-xs font-bold text-slate-200 transition-all duration-300 shadow-xl
-                      ${selectedLocation?.id === loc.id ? 'opacity-100 scale-110 z-20 border-sky-500/50 text-white' : 'opacity-0 group-hover/pin:opacity-100 translate-y-2 group-hover/pin:translate-y-0'}
-                    `}>
-                      {loc.name}
-                    </div>
+              {/* 地点标记：手机端增大点击热区 */}
+              {LOCATIONS.map(loc => (
+                <div 
+                  key={loc.id}
+                  className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer touch-manipulation"
+                  style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
+                  onClick={() => setSelectedLocation(loc)}
+                >
+                  <div className={`w-6 h-6 md:w-8 md:h-8 rounded-full border-2 flex items-center justify-center backdrop-blur-sm transition-all
+                    ${user.currentLocation === loc.id ? 'bg-sky-500 border-white animate-pulse' : 'bg-slate-900/80 border-slate-400'}`}>
+                    <MapPin size={14} />
                   </div>
-                ))}
-              </div>
-
-              {/* 大地图装饰标题 */}
-              <div className="absolute top-6 left-8 pointer-events-none">
-                <h1 className="text-4xl font-black text-white/10 tracking-[0.2em] uppercase">World Map</h1>
-                <div className="text-xs font-mono text-white/20 mt-1">SENTINEL & GUIDE SYSTEM v3.0</div>
-              </div>
+                  {/* 地名标签 */}
+                  <div className={`absolute top-8 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/50 rounded-lg text-[10px] md:text-xs font-bold text-slate-200 transition-all duration-300 shadow-xl
+                    ${selectedLocation?.id === loc.id ? 'opacity-100 scale-110 z-20 border-sky-500/50 text-white' : 'opacity-0 hover:opacity-100 translate-y-2 hover:translate-y-0'}
+                  `}>
+                    {loc.name}
+                  </div>
+                </div>
+              ))}
             </div>
           </motion.div>
         )}
-
+        
         {/* === 模式B: 具体地点视图 (Small Map UI) === */}
         {activeView && (
           <motion.div
@@ -426,42 +387,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* 4. 附近玩家列表 (右上角浮动) */}
-      <div className="absolute top-24 right-4 z-40 flex flex-col items-end pointer-events-none">
-        {localPlayers.length > 0 && (
-          <div className="bg-slate-900/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 mb-2 border border-slate-700/50 shadow-lg">
-            附近感知 ({localPlayers.length})
-          </div>
-        )}
-        <div className="space-y-2 pointer-events-auto max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
-          {localPlayers.map(p => (
-            <motion.div 
-              key={p.id}
-              initial={{ x: 20, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              onClick={() => setInteractTarget(p)} 
-              className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 p-1.5 pl-3 rounded-full flex items-center gap-3 cursor-pointer hover:border-sky-500 hover:bg-slate-800 transition-all group shadow-xl"
-            >
-              <span className="text-[10px] font-bold text-slate-300 max-w-[80px] truncate group-hover:text-white">{p.name}</span>
-              <div className="w-8 h-8 rounded-full bg-slate-800 overflow-hidden border border-slate-600 group-hover:border-sky-400 shadow-inner">
-                {p.avatarUrl ? <img src={p.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs text-white">{p.name[0]}</div>}
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-
-      {/* 5. 地点详情弹窗 (大地图模式下显示) */}
+      {/* 4. 详情弹窗：手机端置底，电脑端居中 */}
       <AnimatePresence>
         {selectedLocation && !activeView && (
           <motion.div 
-            initial={{ y: 50, opacity: 0, scale: 0.95 }} 
-            animate={{ y: 0, opacity: 1, scale: 1 }} 
-            exit={{ y: 50, opacity: 0, scale: 0.95 }} 
-            className="fixed bottom-6 left-4 right-4 md:left-1/2 md:-translate-x-1/2 md:w-[480px] md:bottom-12 bg-slate-900/90 backdrop-blur-xl border border-slate-600/50 p-6 rounded-[2rem] shadow-[0_20px_60px_rgba(0,0,0,0.8)] z-50"
+            initial={{ y: 100 }} animate={{ y: 0 }} exit={{ y: 100 }}
+            className="fixed bottom-0 left-0 right-0 md:bottom-10 md:left-1/2 md:-translate-x-1/2 md:w-[450px] bg-slate-900/95 backdrop-blur-xl p-6 rounded-t-3xl md:rounded-3xl border-t md:border border-white/20 z-50 shadow-2xl"
           >
-            {/* 弹窗背景图模糊映射 */}
-            <div className="absolute inset-0 rounded-[2rem] overflow-hidden -z-10 opacity-30">
+             {/* 弹窗背景图模糊映射 */}
+             <div className="absolute inset-0 rounded-[2rem] overflow-hidden -z-10 opacity-30">
                <img src={LOCATION_BG_MAP[selectedLocation.id] || '/map_background.jpg'} className="w-full h-full object-cover blur-md scale-110"/>
             </div>
 
@@ -522,7 +456,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* 6. 交互与系统弹窗 (保持原样) */}
+      {/* 5. 交互与系统弹窗 (保持原样) */}
       <AnimatePresence>
         {interactTarget && (
           <PlayerInteractionUI 
@@ -609,7 +543,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             </div>
           </motion.div>
         )}
-        {/* 谢幕表单与公墓详情代码省略以保持篇幅，逻辑与原版一致，样式自动继承全局Tailwind设置 */}
       </AnimatePresence>
 
       {/* 公墓弹窗 */}

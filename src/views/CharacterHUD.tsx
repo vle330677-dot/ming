@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from '../types';
 import { 
-  ChevronRight, ChevronLeft, User as UserIcon, Zap, Heart, 
+  ChevronRight, ChevronLeft, Zap, Heart, 
   Activity, Shield, Briefcase, Award, Skull, BookOpen, Trash2, ArrowUpCircle, Package
 } from 'lucide-react';
 
@@ -12,8 +12,8 @@ interface Props {
 }
 
 export function CharacterHUD({ user, onLogout }: Props) {
-  // 默认展开
-  const [isExpanded, setIsExpanded] = useState(true);
+  // 默认收起以适配手机
+  const [isExpanded, setIsExpanded] = useState(false);
   const [skills, setSkills] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]); // 新增背包状态
   const containerRef = useRef(null);
@@ -106,14 +106,14 @@ export function CharacterHUD({ user, onLogout }: Props) {
   return (
     <>
       {/* 限制拖拽区域的隐形容器 (防止拖出屏幕) */}
-      <div ref={containerRef} className="absolute inset-0 pointer-events-none z-50 overflow-hidden" />
+      <div ref={containerRef} className="fixed inset-0 pointer-events-none z-50 overflow-hidden" />
 
       <motion.div
         drag
         dragConstraints={containerRef}
         dragMomentum={false} // 禁止惯性，防止甩飞
-        initial={{ x: 20, y: 20 }}
-        className="absolute z-50 pointer-events-auto"
+        initial={{ x: 16, y: 16 }}
+        className="fixed top-0 left-0 z-[100] pointer-events-auto"
       >
         <AnimatePresence mode="wait">
           {isExpanded ? (
@@ -122,35 +122,35 @@ export function CharacterHUD({ user, onLogout }: Props) {
               initial={{ opacity: 0, scale: 0.9, width: 60 }}
               animate={{ opacity: 1, scale: 1, width: 280 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+              className="bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
             >
               {/* 头部：拖拽手柄 + 简略信息 */}
               <div className="p-4 bg-slate-800/50 border-b border-slate-700 cursor-move flex items-center justify-between group">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-slate-700 overflow-hidden border border-slate-600">
+                  <div className="w-10 h-10 rounded-lg bg-slate-700 overflow-hidden border border-slate-600 shrink-0">
                     {user.avatarUrl ? (
                       <img src={user.avatarUrl} className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-white font-bold">{user.name[0]}</div>
                     )}
                   </div>
-                  <div className="flex flex-col">
-                    <span className="font-black text-white text-sm tracking-wide">{user.name}</span>
-                    <span className={`text-[10px] font-bold uppercase ${isChild ? 'text-amber-400' : 'text-sky-400'}`}>
+                  <div className="flex flex-col overflow-hidden">
+                    <span className="font-black text-white text-sm tracking-wide truncate">{user.name}</span>
+                    <span className={`text-[10px] font-bold uppercase truncate ${isChild ? 'text-amber-400' : 'text-sky-400'}`}>
                        Lv.{user.age} {isChild ? '未分化' : user.role}
                     </span>
                   </div>
                 </div>
                 <button 
                   onClick={() => setIsExpanded(false)}
-                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors shrink-0"
                 >
                   <ChevronLeft size={18} />
                 </button>
               </div>
 
               {/* 详细数据区 */}
-              <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="p-4 space-y-4 overflow-y-auto custom-scrollbar flex-1">
                 {/* 核心三维 */}
                 <div className="space-y-2">
                   <StatBar icon={<Heart size={10} />} label="HP" current={user.hp || 100} max={user.maxHp || 100} color="bg-rose-500" />
@@ -176,11 +176,11 @@ export function CharacterHUD({ user, onLogout }: Props) {
                     <div className="space-y-2">
                       {skills.map(s => (
                         <div key={s.id} className="bg-slate-800/80 border border-slate-700 rounded-lg p-2 flex justify-between items-center">
-                          <div className="flex flex-col">
-                            <span className="text-xs font-bold text-slate-200">{s.name}</span>
+                          <div className="flex flex-col overflow-hidden mr-2">
+                            <span className="text-xs font-bold text-slate-200 truncate">{s.name}</span>
                             <span className="text-[9px] font-black text-sky-400 uppercase mt-0.5">Lv.{s.level}</span>
                           </div>
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 shrink-0">
                             <button 
                               onClick={() => handleMergeSkill(s.name)} 
                               className="p-1.5 bg-sky-900/30 text-sky-400 rounded-md hover:bg-sky-600 hover:text-white transition-colors" 
@@ -214,11 +214,11 @@ export function CharacterHUD({ user, onLogout }: Props) {
                       {inventory.map(inv => (
                         <div key={inv.id} className="bg-slate-800/80 border border-slate-700 rounded-lg p-2 flex flex-col gap-2">
                           <div className="flex justify-between items-start">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-bold text-amber-100">{inv.name}</span>
+                            <div className="flex flex-col mr-2 overflow-hidden">
+                              <span className="text-xs font-bold text-amber-100 truncate">{inv.name}</span>
                               <span className="text-[9px] text-slate-400 mt-0.5">拥有: x{inv.qty}</span>
                             </div>
-                            <span className="text-[9px] px-1.5 py-0.5 bg-slate-700 border border-slate-600 text-slate-300 rounded font-black tracking-widest">{inv.itemType || '未知'}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 bg-slate-700 border border-slate-600 text-slate-300 rounded font-black tracking-widest shrink-0 whitespace-nowrap">{inv.itemType || '未知'}</span>
                           </div>
                           
                           {/* 根据不同类型的物品渲染对应颜色的操作按钮 */}
@@ -271,7 +271,7 @@ export function CharacterHUD({ user, onLogout }: Props) {
               onClick={() => setIsExpanded(true)}
               className="bg-slate-900/80 backdrop-blur-md border border-slate-600 rounded-full p-1.5 pr-4 flex items-center gap-3 cursor-pointer hover:bg-slate-800 hover:border-sky-500 shadow-xl transition-all group"
             >
-              <div className="w-10 h-10 rounded-full bg-slate-700 overflow-hidden border-2 border-slate-600 group-hover:border-sky-400 transition-colors">
+              <div className="w-10 h-10 rounded-full bg-slate-700 overflow-hidden border-2 border-slate-600 group-hover:border-sky-400 transition-colors shrink-0">
                 {user.avatarUrl ? (
                    <img src={user.avatarUrl} className="w-full h-full object-cover" />
                 ) : (
@@ -279,10 +279,9 @@ export function CharacterHUD({ user, onLogout }: Props) {
                 )}
               </div>
               <div className="flex flex-col">
-                 <span className="text-xs font-black text-white">{user.name}</span>
-                 <div className="flex gap-1 h-1 w-12 mt-1">
+                 <span className="text-xs font-black text-white truncate max-w-[80px]">{user.name}</span>
+                 <div className="flex gap-1 h-1 w-12 mt-1 bg-slate-700 rounded-full overflow-hidden">
                     <div className="h-full bg-rose-500 rounded-full" style={{width: `${(user.hp/user.maxHp)*100}%`}}></div>
-                    <div className="h-full bg-sky-500 rounded-full" style={{width: `${(user.mp/user.maxMp)*100}%`}}></div>
                  </div>
               </div>
               <ChevronRight size={14} className="text-slate-500" />
