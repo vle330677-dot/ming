@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, MapPin } from 'lucide-react';
+import { X, MapPin, Settings, Skull, Cross, Send, Trash2 } from 'lucide-react';
 import { User } from '../types';
 
 // ================== 组件导入 ==================
@@ -59,6 +60,52 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [activeView, setActiveView] = useState<string | null>(null);
   const [localPlayers, setLocalPlayers] = useState<any[]>([]);
   const [interactTarget, setInteractTarget] = useState<any>(null);
+  // ... 原有 state
+  const [showSettings, setShowSettings] = useState(false);
+  const [showDeathForm, setShowDeathForm] = useState<'death' | 'ghost' | null>(null);
+  const [deathText, setDeathText] = useState('');
+  
+  // 濒死急救系统
+  const [isDying, setIsDying] = useState(false);
+  const [rescueReqId, setRescueReqId] = useState<number | null>(null);
+  
+  // 公墓系统
+  const [showGraveyard, setShowGraveyard] = useState(false);
+  const [tombstones, setTombstones] = useState<any[]>([]);
+  const [expandedTombstone, setExpandedTombstone] = useState<number | null>(null);
+  const [comments, setComments] = useState<any[]>([]);
+  const [newComment, setNewComment] = useState('');
+
+  // 监听 HP 变化触发濒死
+  useEffect(() => {
+    if (user.hp <= 0 && user.status === 'approved') {
+      setIsDying(true);
+    } else {
+      setIsDying(false);
+    }
+  }, [user.hp, user.status]);
+
+  // 轮询自身发出的急救请求状态
+  useEffect(() => {
+    if (!isDying || !rescueReqId) return;
+    const timer = setInterval(async () => {
+      const res = await fetch(`/api/rescue/check/${user.id}`);
+      const data = await res.json();
+      if (data.outgoing) {
+        if (data.outgoing.status === 'accepted') {
+          await fetch('/api/rescue/confirm', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ patientId: user.id }) });
+          showToast('一位医疗向导将你从死亡边缘拉了回来！');
+          setIsDying(false);
+          setRescueReqId(null);
+          fetchGlobalData();
+        } else if (data.outgoing.status === 'rejected') {
+          showToast('你的求救被拒绝了，生机断绝...');
+          setRescueReqId(null);
+        }
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [isDying, rescueReqId, user.id]);
 
   // 基础逻辑：年龄判断
   const userAge = user?.age || 0;
@@ -292,6 +339,179 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
               <div className="grid grid-cols-2 gap-3">
                 <button className="py-3 bg-sky-600 text-white rounded-2xl text-xs font-black hover:bg-sky-500 transition-colors shadow-lg shadow-sky-900/20">发起对戏</button>
                 <button className="py-3 bg-slate-800 text-white rounded-2xl text-xs font-black hover:bg-slate-700 transition-colors">查看资料</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    {/* --- 新增：强制挂起锁屏 --- */}
+      {(user.status === 'pending_death' || user.status === 'pending_ghost') && (
+        <div className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md">
+          <Skull size={64} className="text-slate-600 mb-6 animate-pulse" />
+          <h1 className="text-3xl font-black text-white mb-4 tracking-widest">命运审视中</h1>
+          <p className="text-slate-400 font-bold max-w-md leading-relaxed">
+            您的谢幕戏正在递交至「塔」的最高议会。<br/>
+            在获得批准前，您的灵魂被锁定于此，无法进行任何交互。
+          </p>
+        </div>
+      )}
+
+      {/* --- 新增：濒死弹窗 --- */}
+      <AnimatePresence>
+        {isDying && user.status === 'approved' && (
+          <div className="fixed inset-0 z-[9999] bg-red-950/90 flex items-center justify-center p-4 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-black border border-red-900 p-8 rounded-[32px] w-full max-w-md text-center shadow-[0_0_100px_rgba(220,38,38,0.3)]"
+            >
+              <Heart size={48} className="text-red-600 mx-auto mb-4 animate-pulse" />
+              <h2 className="text-2xl font-black text-red-500 mb-2">生命体征已消失</h2>
+              <p className="text-slate-400 text-sm mb-8">黑暗正在吞噬你的意识，你将在此长眠，还是做最后的挣扎？</p>
+              
+              <div className="space-y-3">
+                <button 
+                  onClick={handleStruggle} 
+                  disabled={rescueReqId !== null}
+                  className="w-full py-4 bg-red-600 text-white rounded-2xl font-black hover:bg-red-500 transition-colors disabled:opacity-50"
+                >
+                  {rescueReqId ? '正在等待向导回应...' : '挣扎 (向区域内治疗向导求救)'}
+                </button>
+                <button 
+                  onClick={() => { setIsDying(false); setShowDeathForm('death'); }} 
+                  className="w-full py-4 bg-slate-900 text-slate-400 rounded-2xl font-bold hover:bg-slate-800 transition-colors"
+                >
+                  拥抱死亡 (生成墓碑)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- 新增：右下角齿轮菜单 --- */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+        <button onClick={fetchGraveyard} className="p-3.5 bg-slate-900/80 backdrop-blur border border-slate-700 text-slate-300 rounded-full hover:text-white hover:bg-slate-800 hover:border-slate-500 transition-all shadow-lg group relative">
+          <Cross size={20} />
+          <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-black text-white text-[10px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">世界公墓</span>
+        </button>
+        <button onClick={() => setShowSettings(!showSettings)} className="p-3.5 bg-slate-900/80 backdrop-blur border border-slate-700 text-slate-300 rounded-full hover:text-white hover:bg-slate-800 hover:border-slate-500 transition-all shadow-lg group relative">
+          <Settings size={20} />
+          <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 px-2 py-1 bg-black text-white text-[10px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">设置/谢幕</span>
+        </button>
+      </div>
+
+      {/* --- 新增：设置菜单与谢幕表单 --- */}
+      <AnimatePresence>
+        {showSettings && !showDeathForm && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed bottom-24 right-6 w-64 bg-slate-900 border border-slate-700 rounded-2xl p-4 shadow-2xl z-50"
+          >
+            <h4 className="text-xs font-black text-slate-400 uppercase mb-3 px-2">命运抉择</h4>
+            <div className="space-y-2">
+              <button onClick={() => setShowDeathForm('death')} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-rose-400 bg-rose-500/10 rounded-xl hover:bg-rose-500/20 transition-colors">
+                <Skull size={16}/> 申请谢幕 (死亡)
+              </button>
+              {user.role !== '鬼魂' && (
+                <button onClick={() => setShowDeathForm('ghost')} className="w-full flex items-center gap-3 p-3 text-sm font-bold text-violet-400 bg-violet-500/10 rounded-xl hover:bg-violet-500/20 transition-colors">
+                  <Skull size={16} className="opacity-50"/> 转化鬼魂 (换皮)
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {showDeathForm && (
+          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center p-4">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-slate-900 border border-slate-700 p-8 rounded-3xl w-full max-w-lg shadow-2xl">
+              <h2 className="text-2xl font-black text-white mb-2">{showDeathForm === 'death' ? '谢幕与墓志铭' : '化鬼契约'}</h2>
+              <p className="text-sm text-slate-400 mb-6">
+                {showDeathForm === 'death' ? '写下你的死因与墓志铭，提交后将生成世界墓碑，数据将被剥夺。' : '放弃肉身与精神体，以灵体状态游荡于世。'}
+              </p>
+              <textarea
+                value={deathText}
+                onChange={e => setDeathText(e.target.value)}
+                placeholder="在此书写你的落幕之辞..."
+                className="w-full h-32 p-4 bg-slate-950 border border-slate-800 rounded-xl text-slate-300 outline-none focus:border-sky-500/50 mb-6 text-sm resize-none"
+              />
+              <div className="flex gap-3">
+                <button onClick={() => setShowDeathForm(null)} className="flex-1 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700">取消</button>
+                <button onClick={handleSubmitDeath} className="flex-[2] py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-500 shadow-lg">提交审核</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- 新增：世界公墓系统 --- */}
+      <AnimatePresence>
+        {showGraveyard && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+            <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ opacity: 0 }} className="bg-slate-900 border border-slate-700 rounded-[32px] w-full max-w-3xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <h2 className="text-2xl font-black text-white flex items-center gap-3"><Cross className="text-slate-500"/> 世界公墓</h2>
+                <button onClick={() => setShowGraveyard(false)} className="text-slate-500 hover:text-white"><X size={24}/></button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar bg-slate-950">
+                {tombstones.length === 0 ? (
+                  <div className="text-center py-20 text-slate-600 font-bold tracking-widest">目前无人长眠于此</div>
+                ) : (
+                  tombstones.map(t => (
+                    <div key={t.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 transition-all hover:border-slate-700">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h3 className="text-xl font-black text-slate-200">{t.name} 的墓碑</h3>
+                          <div className="text-[10px] uppercase font-bold text-slate-500 mt-1 space-x-2">
+                            <span>生前: {t.role}</span>
+                            <span>{t.mentalRank}/{t.physicalRank}</span>
+                            {t.spiritName && <span>精神体: {t.spiritName}</span>}
+                          </div>
+                        </div>
+                        <button onClick={() => loadComments(t.id)} className="text-xs font-bold text-sky-500 bg-sky-500/10 px-3 py-1.5 rounded-lg hover:bg-sky-500/20">
+                          {expandedTombstone === t.id ? '收起留言' : '献花/留言'}
+                        </button>
+                      </div>
+                      
+                      <p className="text-sm text-slate-400 bg-slate-950 p-4 rounded-xl border border-slate-800/50 italic">
+                        "{t.deathDescription}"
+                      </p>
+
+                      {/* 评论展开区域 */}
+                      <AnimatePresence>
+                        {expandedTombstone === t.id && (
+                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                            <div className="mt-4 pt-4 border-t border-slate-800">
+                              <div className="space-y-2 mb-4 max-h-40 overflow-y-auto custom-scrollbar">
+                                {comments.length === 0 && <div className="text-xs text-slate-600">还没有人留下只言片语...</div>}
+                                {comments.map(c => (
+                                  <div key={c.id} className="group flex justify-between items-start p-2 bg-slate-950/50 rounded-lg">
+                                    <div className="text-xs">
+                                      <span className="font-bold text-sky-400 mr-2">{c.userName}:</span>
+                                      <span className="text-slate-300">{c.content}</span>
+                                    </div>
+                                    {c.userId === user.id && (
+                                      <button onClick={() => deleteComment(c.id, t.id)} className="text-rose-500/50 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="flex gap-2">
+                                <input 
+                                  type="text" value={newComment} onChange={e => setNewComment(e.target.value)}
+                                  placeholder="写下你的悼词..."
+                                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-sky-500"
+                                />
+                                <button onClick={() => addComment(t.id)} className="bg-sky-600 text-white p-2 rounded-lg hover:bg-sky-500 transition-colors"><Send size={14}/></button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  ))
+                )}
               </div>
             </motion.div>
           </div>

@@ -86,6 +86,28 @@ db.exec(`
     spiritName TEXT,
     isHidden INTEGER DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS tombstones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    deathDescription TEXT, -- 这里的文本将作为 墓志铭/谢幕戏
+    role TEXT,
+    mentalRank TEXT,
+    physicalRank TEXT,
+    ability TEXT,
+    spiritName TEXT,
+    isHidden INTEGER DEFAULT 0
+  );
+
+  -- 新增：墓碑留言表
+  CREATE TABLE IF NOT EXISTS tombstone_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tombstoneId INTEGER,
+    userId INTEGER,
+    userName TEXT,
+    content TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(tombstoneId) REFERENCES tombstones(id)
+  );
 
   CREATE TABLE IF NOT EXISTS spirit_status (
     userId INTEGER PRIMARY KEY,
@@ -477,6 +499,21 @@ async function startServer() {
     db.prepare('DELETE FROM rescue_requests WHERE patientId = ?').run(patientId);
     res.json({ success: true });
   });
+  // 拒绝救援
+  app.post('/api/rescue/reject', (req, res) => {
+    const { requestId } = req.body;
+    db.prepare('UPDATE rescue_requests SET status = "rejected" WHERE id = ?').run(requestId);
+    res.json({ success: true });
+  });
+
+  // 确认救援，恢复 30% HP
+  app.post('/api/rescue/confirm', (req, res) => {
+    const { patientId } = req.body;
+    // 恢复 30% 最大生命值
+    db.prepare('UPDATE users SET hp = maxHp * 0.3 WHERE id = ?').run(patientId);
+    db.prepare('DELETE FROM rescue_requests WHERE patientId = ?').run(patientId);
+    res.json({ success: true });
+  });
 
   app.post('/api/users/:id/submit-death', (req, res) => {
     const { type, text } = req.body;
@@ -499,7 +536,25 @@ async function startServer() {
   });
 
   app.post('/api/admin/users/:id/status', (req, res) => {
-    db.prepare('UPDATE users SET status = ? WHERE id = ?').run(req.body.status, req.params.id);
+    const { status } = req.body;
+    const userId = req.params.id;
+    
+    // 如果管理员批准死亡，生成墓碑
+    if (status === 'dead') {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+      if (user) {
+        // 检查是否已经有墓碑防止重复生成
+        const exist = db.prepare('SELECT id FROM tombstones WHERE name = ?').get(user.name);
+        if (!exist) {
+          db.prepare(`
+            INSERT INTO tombstones (name, deathDescription, role, mentalRank, physicalRank, ability, spiritName) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(user.name, user.deathDescription || '无名之殇', user.role, user.mentalRank, user.physicalRank, user.ability, user.spiritName);
+        }
+      }
+    }
+    
+    db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, userId);
     res.json({ success: true });
   });
 
@@ -960,6 +1015,29 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
+  });
+  // --- 公墓与留言系统 ---
+  app.get('/api/graveyard', (_req, res) => {
+    const tombstones = db.prepare('SELECT * FROM tombstones ORDER BY id DESC').all();
+    res.json({ success: true, tombstones });
+  });
+
+  app.get('/api/graveyard/:id/comments', (req, res) => {
+    const comments = db.prepare('SELECT * FROM tombstone_comments WHERE tombstoneId = ? ORDER BY createdAt ASC').all(req.params.id);
+    res.json({ success: true, comments });
+  });
+
+  app.post('/api/graveyard/:id/comments', (req, res) => {
+    const { userId, userName, content } = req.body;
+    db.prepare('INSERT INTO tombstone_comments (tombstoneId, userId, userName, content) VALUES (?, ?, ?, ?)')
+      .run(req.params.id, userId, userName, content);
+    res.json({ success: true });
+  });
+
+  app.delete('/api/graveyard/comments/:commentId', (req, res) => {
+    const { userId } = req.body; // 校验是不是本人删的
+    db.prepare('DELETE FROM tombstone_comments WHERE id = ? AND userId = ?').run(req.params.commentId, userId);
+    res.json({ success: true });
   });
 }
 
