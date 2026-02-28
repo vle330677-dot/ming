@@ -9,8 +9,13 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = process.env.DB_PATH || 'game.db';
+// server.ts
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'data', 'game.db');
+// 确保文件夹存在（手动或在 Dockerfile 中创建）
 const db = new Database(dbPath);
+
+// 【修复1】启用 WAL 模式，提升 SQLite 高并发读写性能，避免 Database is locked
+db.pragma('journal_mode = WAL');
 
 // ================= 1. 数据库初始化 =================
 db.exec(`
@@ -48,16 +53,6 @@ db.exec(`
     allowVisit INTEGER DEFAULT 1,
     fury INTEGER DEFAULT 0,
     partyId TEXT DEFAULT NULL
-  );
-  CREATE TABLE IF NOT EXISTS monsters (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT,
-    avatarUrl TEXT,
-    attackType TEXT DEFAULT 'physical', -- 'physical' (肉体) 或 'mental' (精神)
-    power INTEGER DEFAULT 10,           -- 怪物强度数值
-    hp INTEGER DEFAULT 100,
-    rarity TEXT DEFAULT '普通'           -- '普通', '精英', '领主'
   );
   
   CREATE TABLE IF NOT EXISTS active_rp_sessions (
@@ -128,7 +123,6 @@ db.exec(`
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- 核心修改：物品表新增了阵营、阶级、种类和效果值
   CREATE TABLE IF NOT EXISTS global_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -250,8 +244,12 @@ db.exec(`
   );
 `);
 
-// 动态补全可能缺失的字段 (兼容老数据库)
+// 【修复2】动态补全字段，添加正则校验防御 SQL 注入
 const addColumn = (table: string, col: string, type: string) => {
+  if (!/^[a-zA-Z0-9_]+$/.test(table) || !/^[a-zA-Z0-9_]+$/.test(col)) {
+    console.warn(`Invalid table or column name in addColumn: ${table}.${col}`);
+    return;
+  }
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   } catch {
@@ -292,8 +290,6 @@ addColumn('global_items', 'npcId', 'TEXT');
 addColumn('global_skills', 'npcId', 'TEXT');
 addColumn('rp_archives', 'locationName', 'TEXT');
 addColumn('rp_archives', 'participantNames', 'TEXT');
-
-// 为物品表新增字段保护
 addColumn('global_items', 'faction', "TEXT DEFAULT '通用'");
 addColumn('global_items', 'tier', "TEXT DEFAULT '低阶'");
 addColumn('global_items', 'itemType', "TEXT DEFAULT '回复道具'");
@@ -330,14 +326,13 @@ seedData();
 
 // ================= 3. 辅助配置 =================
 
-// 地点与掉落派系的映射 (用于探索掉落技能/物品)
 const LOCATION_FACTION_MAP: Record<string, string> = {
   'tower_of_life': '精神系',
   'london_tower': '元素系',
   'paranormal_office': '感知系',
   'demon_society': '信息系',
-  'slums': '炼金系',     // 西市
-  'rich_area': '强化系', // 东市
+  'slums': '炼金系',     
+  'rich_area': '强化系', 
   'sanctuary': '治疗系',
   'army': '物理系'
 };
@@ -370,7 +365,6 @@ const JOB_LIMITS: Record<string, number> = {
   观察者首领: 1, 情报搜集员: 9999, 情报处理员: 9999
 };
 
-// 16-19岁强制降级映射表
 const LOWEST_JOBS_MAP: Record<string, string> = {
   '圣子/圣女': '仆从', '侍奉者': '仆从', '候选者': '仆从', '仆从': '仆从',
   '军队将官': '军队士兵', '军队校官': '军队士兵', '军队尉官': '军队士兵', '军队士兵': '军队士兵',
@@ -384,24 +378,20 @@ const LOWEST_JOBS_MAP: Record<string, string> = {
   '圣所保育员': '圣所职工', '圣所职工': '圣所职工',
 };
 
-// 本地日期（避免 UTC 偏差）
 const getLocalToday = () => {
   const d = new Date();
   const tzOffsetMs = d.getTimezoneOffset() * 60 * 1000;
   return new Date(d.getTime() - tzOffsetMs).toISOString().split('T')[0];
 };
 
-// 级联删除
 const deleteUserCascade = db.transaction((userId: number) => {
   db.prepare('DELETE FROM user_inventory WHERE userId = ?').run(userId);
   db.prepare('DELETE FROM user_skills WHERE userId = ?').run(userId);
   db.prepare('DELETE FROM spirit_status WHERE userId = ?').run(userId);
-
   db.prepare('DELETE FROM rescue_requests WHERE patientId = ? OR healerId = ?').run(userId, userId);
   db.prepare('DELETE FROM roleplay_messages WHERE senderId = ? OR receiverId = ?').run(userId, userId);
   db.prepare('DELETE FROM commissions WHERE publisherId = ? OR acceptedById = ?').run(userId, userId);
   db.prepare('DELETE FROM auction_items WHERE sellerId = ? OR highestBidderId = ?').run(userId, userId);
-
   db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 });
 
@@ -430,7 +420,6 @@ async function startServer() {
 
   // ================= 5. 游戏前端核心 API =================
 
-  // --- 玩家笔记 ---
   app.get('/api/notes/:ownerId/:targetId', (req, res) => {
     const note = db.prepare('SELECT content FROM player_notes WHERE ownerId = ? AND targetId = ?').get(req.params.ownerId, req.params.targetId);
     res.json({ success: true, content: note ? (note as any).content : '' });
@@ -445,7 +434,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 发起对戏 (建立会话并自动组队)
   app.post('/api/rp/start', (req, res) => {
     const { initiator, target, locationId, locationName } = req.body;
     const sessionId = `RP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -465,7 +453,6 @@ async function startServer() {
     res.json({ success: true, sessionId });
   });
 
-  // 获取会话数据与消息 (短轮询用)
   app.get('/api/rp/session/:id', (req, res) => {
     const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
     if (!session) return res.json({ success: false });
@@ -476,7 +463,6 @@ async function startServer() {
     res.json({ success: true, session, members, messages });
   });
 
-  // 发送对戏消息
   app.post('/api/rp/session/:id/message', (req, res) => {
     const { senderId, senderName, content } = req.body;
     db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content) VALUES (?, ?, ?, ?)')
@@ -484,7 +470,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 申请评理 (呼叫军队)
   app.post('/api/rp/session/:id/mediate', (req, res) => {
     const { requesterName } = req.body;
     db.prepare("UPDATE active_rp_sessions SET status = 'mediating' WHERE id = ?").run(req.params.id);
@@ -493,37 +478,31 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 发起结束对戏 / 同意结束并存档
   app.post('/api/rp/session/:id/end', (req, res) => {
     const { userId, archiveTitle } = req.body;
     const session = db.prepare('SELECT * FROM active_rp_sessions WHERE id = ?').get(req.params.id) as any;
     
     if (session.endProposedBy && session.endProposedBy !== userId) {
-      // 对方同意，生成完整存档
       const members = db.prepare('SELECT * FROM active_rp_members WHERE sessionId = ?').all(req.params.id);
       const memberIds = JSON.stringify(members.map((m: any) => m.userId));
-      const memberNames = members.map((m: any) => m.userName).join(', '); // 拼接名字用于搜索
+      const memberNames = members.map((m: any) => m.userName).join(', '); 
       
       db.transaction(() => {
         const archiveId = `ARC-${Date.now()}`;
-        // 1. 插入主档案
         db.prepare('INSERT INTO rp_archives (id, title, locationId, locationName, participants, participantNames) VALUES (?, ?, ?, ?, ?, ?)')
           .run(archiveId, archiveTitle || `${session.locationName}的邂逅`, session.locationId, session.locationName, memberIds, memberNames);
         
-        // 2. 将临时消息全部转移到永久存档表中
         db.prepare(`
           INSERT INTO rp_archive_messages (archiveId, senderId, senderName, content, type, createdAt)
           SELECT ?, senderId, senderName, content, type, createdAt FROM active_rp_messages WHERE sessionId = ?
         `).run(archiveId, req.params.id);
 
-        // 3. 删除活跃会话
         db.prepare('DELETE FROM active_rp_sessions WHERE id = ?').run(req.params.id);
         db.prepare('DELETE FROM active_rp_members WHERE sessionId = ?').run(req.params.id);
         db.prepare('DELETE FROM active_rp_messages WHERE sessionId = ?').run(req.params.id);
       })();
       return res.json({ success: true, ended: true });
     } else {
-      // 自己发起结束提议
       db.prepare("UPDATE active_rp_sessions SET status = 'ending', endProposedBy = ? WHERE id = ?").run(userId, req.params.id);
       db.prepare('INSERT INTO active_rp_messages (sessionId, senderId, senderName, content, type) VALUES (?, ?, ?, ?, ?)')
         .run(req.params.id, 0, '系统', `一方发起了离开并结束对戏的请求，等待另一方确认...`, 'system');
@@ -531,10 +510,8 @@ async function startServer() {
     }
   });
 
-  // --- 交互动作 API (战斗、偷窃、恶作剧等基础结算) ---
   app.post('/api/interact/combat', (req, res) => {
     const { attackerId, defenderId, attackerScore, defenderScore } = req.body;
-    // 简化的胜负判定：分高者胜，败者扣 5% HP
     const isAttackerWin = attackerScore >= defenderScore;
     const loserId = isAttackerWin ? defenderId : attackerId;
     db.prepare('UPDATE users SET hp = maxHp * 0.95 WHERE id = ?').run(loserId);
@@ -543,7 +520,6 @@ async function startServer() {
 
   app.post('/api/interact/prank', (req, res) => {
     const { ghostId, targetId, targetRole } = req.body;
-    // 鬼魂恶作剧逻辑
     if (targetRole === '哨兵') {
       db.prepare('UPDATE users SET fury = MIN(100, fury + 15) WHERE id = ?').run(targetId);
       res.json({ success: true, message: '恶作剧成功，对方狂暴值上升！' });
@@ -556,34 +532,28 @@ async function startServer() {
   app.post('/api/interact/probe', (req, res) => {
     const { targetId } = req.body;
     const target = db.prepare('SELECT mentalRank, physicalRank, ability, hp, mp, fury FROM users WHERE id = ?').get(targetId) as any;
-    // 随机返回一个属性
     const keys = Object.keys(target);
     const randomKey = keys[Math.floor(Math.random() * keys.length)];
     res.json({ success: true, probedStat: { key: randomKey, value: target[randomKey] } });
   });
 
-  // --- 补全新增：偷窃功能 ---
   app.post('/api/interact/steal', (req, res) => {
     const { attackerId, targetId } = req.body;
     try {
-      // 找到目标身上的所有物品
       const targetItems = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND qty > 0').all(targetId) as any[];
       if (targetItems.length === 0) {
         return res.json({ success: false, message: '对方穷得叮当响，什么都没偷到。' });
       }
       
-      // 随机挑一个
       const itemToSteal = targetItems[Math.floor(Math.random() * targetItems.length)];
       
       const transaction = db.transaction(() => {
-        // 从目标身上扣除
         if (itemToSteal.qty === 1) {
           db.prepare('DELETE FROM user_inventory WHERE id = ?').run(itemToSteal.id);
         } else {
           db.prepare('UPDATE user_inventory SET qty = qty - 1 WHERE id = ?').run(itemToSteal.id);
         }
         
-        // 发给偷窃者
         const existingInAttacker = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(attackerId, itemToSteal.name) as any;
         if (existingInAttacker) {
           db.prepare('UPDATE user_inventory SET qty = qty + 1 WHERE id = ?').run(existingInAttacker.id);
@@ -599,36 +569,29 @@ async function startServer() {
     }
   });
 
-  // --- 狂暴值系统：战斗增加 ---
   app.post('/api/combat/end', (req, res) => {
     const { userId } = req.body;
-    // 简单的战斗逻辑：只要战斗，狂暴值+20 (上限100)
     db.prepare('UPDATE users SET fury = MIN(100, fury + 20) WHERE id = ?').run(userId);
     res.json({ success: true, message: '战斗结束，精神狂暴值上升了 20%！' });
   });
 
-  // --- 狂暴值系统：向导抚慰 ---
   app.post('/api/guide/soothe', (req, res) => {
     const { sentinelId, guideId } = req.body;
-    
     const sentinel = db.prepare('SELECT name, fury FROM users WHERE id = ?').get(sentinelId) as any;
     const guide = db.prepare('SELECT name FROM users WHERE id = ?').get(guideId) as any;
 
     if (!sentinel || !guide) return res.json({ success: false, message: '用户不存在' });
 
-    // 1. 计算契合度 (复用前端算法保证一致)
     const str = sentinel.name < guide.name ? sentinel.name + guide.name : guide.name + sentinel.name;
     let hash = 0;
     for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
     const compatibility = Math.abs(hash % 101);
 
-    // 2. 判定减少数值
     let reduceAmount = 0;
     if (compatibility <= 30) reduceAmount = 10;
     else if (compatibility <= 70) reduceAmount = 30;
     else reduceAmount = 60;
 
-    // 3. 执行更新
     const newFury = Math.max(0, (sentinel.fury || 0) - reduceAmount);
     db.prepare('UPDATE users SET fury = ? WHERE id = ?').run(newFury, sentinelId);
 
@@ -641,7 +604,6 @@ async function startServer() {
     });
   });
 
-  // --- 新增：大地图探索寻找技能 ---
   app.post('/api/explore/skill', (req, res) => {
     const { userId, locationId } = req.body;
     const targetFaction = LOCATION_FACTION_MAP[locationId];
@@ -651,18 +613,15 @@ async function startServer() {
     const user = db.prepare('SELECT faction FROM users WHERE id = ?').get(userId) as any;
     if (!user) return res.json({ success: false, message: '用户不存在' });
 
-    // 随机获取该派系的一个技能 (无论阶级)
     const skills = db.prepare('SELECT * FROM global_skills WHERE faction = ?').all(targetFaction) as any[];
     if (skills.length === 0) return res.json({ success: false, message: `管理员尚未在该区域部署【${targetFaction}】技能库，你什么都没找到。` });
 
     const randomSkill = skills[Math.floor(Math.random() * skills.length)];
 
     if (user.faction === targetFaction) {
-        // 本派系，直接学习
         db.prepare('INSERT INTO user_skills (userId, name, level) VALUES (?, ?, 1)').run(userId, randomSkill.name);
         res.json({ success: true, message: `探索大成功！你顿悟了本派系（${targetFaction}）技能：【${randomSkill.name}】(Lv.1)`, type: 'learned' });
     } else {
-        // 非本派系，转化为技能书放入背包
         const bookName = `[技能书] ${randomSkill.name} (${randomSkill.faction})`;
         const existing = db.prepare('SELECT * FROM user_inventory WHERE userId = ? AND name = ?').get(userId, bookName) as any;
         if (existing) {
@@ -674,12 +633,10 @@ async function startServer() {
     }
   });
 
-  // --- 新增：大地图探索寻找物资 ---
   app.post('/api/explore/item', (req, res) => {
     const { userId, locationId } = req.body;
     const targetFaction = LOCATION_FACTION_MAP[locationId] || '通用';
 
-    // 随机阶级掉落率：60%低阶，30%中阶，10%高阶
     const roll = Math.random() * 100;
     let targetTier = '低阶';
     if (roll > 60 && roll <= 90) targetTier = '中阶';
@@ -703,7 +660,6 @@ async function startServer() {
     res.json({ success: true, message: `你搜索了一番，发现了 [${randomItem.tier}] ${randomItem.name}！` });
   });
 
-  // --- 新增：背包物品使用系统 ---
   app.post('/api/inventory/use', (req, res) => {
     const { userId, inventoryId } = req.body;
 
@@ -711,20 +667,16 @@ async function startServer() {
       const invItem = db.prepare('SELECT * FROM user_inventory WHERE id = ? AND userId = ?').get(inventoryId, userId) as any;
       if (!invItem || invItem.qty < 1) return res.json({ success: false, message: '物品不存在或数量不足。' });
 
-      // 根据名字去全局匹配属性
       const globalItem = db.prepare('SELECT * FROM global_items WHERE name = ?').get(invItem.name) as any;
-      
       let resultMessage = '';
 
       if (!globalItem) {
-        // 可能是自动转化的技能书
         if (invItem.name.startsWith('[技能书]')) {
            return res.json({ success: false, message: '非本派系的技能书，请寻找他人交易，无法直接使用。' });
         }
         return res.json({ success: false, message: '该物品已绝版，无法使用。' });
       }
 
-      // 种类判断处理
       if (globalItem.itemType === '回复道具') {
         const heal = globalItem.effectValue || 20;
         db.prepare('UPDATE users SET hp = MIN(maxHp, hp + ?), mp = MIN(maxMp, mp + ?), fury = MAX(0, fury - ?) WHERE id = ?').run(heal, heal, heal, userId);
@@ -742,7 +694,6 @@ async function startServer() {
         return res.json({ success: false, message: '这是任务道具，只能用于提交委托。' });
       }
 
-      // 扣除物品
       if (invItem.qty === 1) db.prepare('DELETE FROM user_inventory WHERE id = ?').run(invItem.id);
       else db.prepare('UPDATE user_inventory SET qty = qty - 1 WHERE id = ?').run(invItem.id);
 
@@ -752,24 +703,19 @@ async function startServer() {
     }
   });
 
-
-  // --- 技能管理：删除技能 ---
   app.delete('/api/users/:userId/skills/:skillId', (req, res) => {
     db.prepare('DELETE FROM user_skills WHERE id = ? AND userId = ?').run(req.params.skillId, req.params.userId);
     res.json({ success: true });
   });
 
-  // --- 技能管理：技能合并/升阶 ---
   app.post('/api/users/:userId/skills/merge', (req, res) => {
     const { skillName } = req.body;
     const userId = req.params.userId;
     
-    // 找出该用户所有同名技能，按等级从小到大排
     const skills = db.prepare('SELECT * FROM user_skills WHERE userId = ? AND name = ? ORDER BY level ASC').all(userId, skillName) as any[];
     
     if (skills.length < 2) return res.json({ success: false, message: '需要至少 2 个同名技能才能进行融合。' });
 
-    // 寻找两个等级完全一样的技能进行合成
     let id1 = -1, id2 = -1, targetLevel = -1;
     for (let i = 0; i < skills.length - 1; i++) {
         if (skills[i].level === skills[i+1].level) {
@@ -791,62 +737,44 @@ async function startServer() {
     res.json({ success: true, message: `融合成功！【${skillName}】 提升到了 Lv.${targetLevel}` });
   });
 
-
-  // --- 精神力训练系统 ---
   app.post('/api/training/complete', (req, res) => {
     const { userId } = req.body;
     const today = getLocalToday();
 
     try {
       const user = db.prepare('SELECT trainCount, mentalProgress, lastResetDate FROM users WHERE id = ?').get(userId) as any;
-      
       if (!user) return res.json({ success: false, message: '用户不存在' });
-      
       if (user.trainCount >= 3 && user.lastResetDate === today) {
         return res.json({ success: false, message: '今日精神力训练次数已耗尽' });
       }
 
       const newProgress = Math.min(100, (user.mentalProgress || 0) + 5);
-
-      db.prepare(`
-        UPDATE users 
-        SET mentalProgress = ?, trainCount = trainCount + 1 
-        WHERE id = ?
-      `).run(newProgress, userId);
-
+      db.prepare(`UPDATE users SET mentalProgress = ?, trainCount = trainCount + 1 WHERE id = ?`).run(newProgress, userId);
       res.json({ success: true, newProgress });
     } catch (e: any) {
       res.status(500).json({ success: false, message: e.message });
     }
   });
 
-  // --- 同地点玩家列表（用于点击头像发起对戏）---
   app.get('/api/locations/:locationId/players', (req, res) => {
     const { locationId } = req.params;
     const excludeId = Number(req.query.excludeId);
 
     try {
       let players: any[] = [];
-
       if (Number.isFinite(excludeId)) {
         players = db.prepare(`
           SELECT id, name, avatarUrl, role, currentLocation, status
-          FROM users
-          WHERE currentLocation = ?
-            AND status IN ('approved', 'ghost')
-            AND id <> ?
+          FROM users WHERE currentLocation = ? AND status IN ('approved', 'ghost') AND id <> ?
           ORDER BY id ASC
         `).all(locationId, excludeId);
       } else {
         players = db.prepare(`
           SELECT id, name, avatarUrl, role, currentLocation, status
-          FROM users
-          WHERE currentLocation = ?
-            AND status IN ('approved', 'ghost')
+          FROM users WHERE currentLocation = ? AND status IN ('approved', 'ghost')
           ORDER BY id ASC
         `).all(locationId);
       }
-
       res.json({ success: true, players });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
@@ -861,11 +789,9 @@ async function startServer() {
 
   app.get('/api/rescue/check/:userId', (req, res) => {
     const { userId } = req.params;
-    const incoming = db
-      .prepare(
+    const incoming = db.prepare(
         'SELECT r.*, u.name as patientName FROM rescue_requests r JOIN users u ON r.patientId = u.id WHERE r.healerId = ? AND r.status = "pending"'
-      )
-      .get(userId);
+      ).get(userId);
     const outgoing = db.prepare('SELECT * FROM rescue_requests WHERE patientId = ? ORDER BY id DESC LIMIT 1').get(userId);
     res.json({ success: true, incoming, outgoing });
   });
@@ -876,17 +802,14 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 拒绝救援
   app.post('/api/rescue/reject', (req, res) => {
     const { requestId } = req.body;
     db.prepare('UPDATE rescue_requests SET status = "rejected" WHERE id = ?').run(requestId);
     res.json({ success: true });
   });
 
-  // 确认救援，恢复 30% HP
   app.post('/api/rescue/confirm', (req, res) => {
     const { patientId } = req.body;
-    // 恢复 30% 最大生命值
     db.prepare('UPDATE users SET hp = maxHp * 0.3 WHERE id = ?').run(patientId);
     db.prepare('DELETE FROM rescue_requests WHERE patientId = ?').run(patientId);
     res.json({ success: true });
@@ -898,15 +821,11 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // 【修复3】移除前端读取时的硬编码，要求数据库内的数据即真实表现
   app.get('/api/admin/users', (_req, res) => {
     try {
-      const users = db.prepare('SELECT * FROM users').all();
-      const processedUsers = users.map((u: any) => ({
-        ...u,
-        faction: u.age < 16 ? '圣所' : u.faction,
-        role: u.age < 16 ? '未分化' : u.role
-      }));
-      res.json({ success: true, users: processedUsers });
+      const users = db.prepare('SELECT * FROM users ORDER BY id DESC').all();
+      res.json({ success: true, users });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -916,11 +835,9 @@ async function startServer() {
     const { status } = req.body;
     const userId = req.params.id;
     
-    // 如果管理员批准死亡，生成墓碑
     if (status === 'dead') {
       const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
       if (user) {
-        // 检查是否已经有墓碑防止重复生成
         const exist = db.prepare('SELECT id FROM tombstones WHERE name = ?').get(user.name);
         if (!exist) {
           db.prepare(`
@@ -959,8 +876,15 @@ async function startServer() {
     }
   });
 
+  // 【修复3】更新/批准用户时，若年龄小于16，从源头上写入一致的数据
   app.put('/api/admin/users/:id', (req, res) => {
-    const { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
+    let { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
+    
+    if (age && age < 16) {
+      faction = '圣所';
+      role = '未分化';
+    }
+
     db.prepare(
       `UPDATE users
        SET role=?, age=?, faction=?, mentalRank=?, physicalRank=?, ability=?, spiritName=?, profileText=?, status=?, password=?
@@ -976,9 +900,7 @@ async function startServer() {
   app.put('/api/users/:id/settings', (req, res) => {
     const { roomBgImage, roomDescription, allowVisit, password } = req.body;
     db.prepare(`
-       UPDATE users 
-       SET roomBgImage=?, roomDescription=?, allowVisit=?, password=? 
-       WHERE id=?
+       UPDATE users SET roomBgImage=?, roomDescription=?, allowVisit=?, password=? WHERE id=?
     `).run(
       roomBgImage || null, roomDescription || null, allowVisit ? 1 : 0, password || null, req.params.id
     );
@@ -1008,6 +930,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // 【修复3】读取自身信息时，不再覆盖阵营数据展示，而是读取真实数据
   app.get('/api/users/:name', (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE name = ?').get(req.params.name) as any;
     if (!user) return res.json({ success: false, message: 'User not found' });
@@ -1017,10 +940,6 @@ async function startServer() {
       db.prepare('UPDATE users SET workCount = 0, trainCount = 0, lastResetDate = ? WHERE id = ?').run(today, user.id);
       user.workCount = 0;
       user.trainCount = 0;
-    }
-    if (user.age < 16) {
-      user.faction = '圣所';
-      user.role = '未分化';
     }
 
     res.json({ success: true, user });
@@ -1035,9 +954,14 @@ async function startServer() {
     }
   });
 
-  // 更新用户信息（抽取后保存）
+  // 【修复3】用户注册时，若未分化，从源头写入修正数据
   app.post('/api/users', (req, res) => {
-    const { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
+    let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
+    
+    if (age && age < 16) {
+      role = '未分化';
+    }
+
     try {
       db.prepare(`
         UPDATE users
@@ -1061,7 +985,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // --- 增强查询：将用户背包和全局物品属性联表查询 ---
   app.get('/api/users/:id/inventory', (req, res) => {
     const items = db.prepare(`
       SELECT ui.*, gi.itemType, gi.effectValue, gi.description, gi.tier 
@@ -1214,7 +1137,6 @@ async function startServer() {
     res.json({ success: true, levelUp: levelGain > 0 });
   });
 
-  // --- 入职与系统判定 ---
   app.post('/api/tower/join', (req, res) => {
     const { userId, jobName } = req.body;
     try {
@@ -1222,13 +1144,11 @@ async function startServer() {
       if (!user) return res.json({ success: false, message: '用户不存在' });
       if (user.job && user.job !== '无') return res.json({ success: false, message: '已有职位' });
 
-      // 未成年拦截
       if (user.age < 16 && jobName !== '圣所幼崽') {
          return res.json({ success: false, message: '未分化者无法执行该操作' });
       }
 
       let finalJob = jobName;
-      // 16-19岁强制降级逻辑 (除了学员外，统一打回基层)
       if (user.age >= 16 && user.age <= 19) {
         if (finalJob === '伦敦塔教师' || finalJob === '伦敦塔职工') {
           finalJob = '伦敦塔学员';
@@ -1337,7 +1257,6 @@ async function startServer() {
     const commissions = db.prepare('SELECT * FROM commissions ORDER BY createdAt DESC').all();
     res.json({ success: true, commissions });
   });
-  
 
   app.post('/api/commissions', (req, res) => {
     const { id, publisherId, publisherName, title, content, difficulty, reward, isAnonymous } = req.body;
@@ -1370,10 +1289,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // ==========================================
-  // 👇 公墓与对戏存档 API 👇
-  // ==========================================
-  
   app.get('/api/graveyard', (_req, res) => {
     const tombstones = db.prepare('SELECT * FROM tombstones ORDER BY id DESC').all();
     res.json({ success: true, tombstones });
@@ -1397,7 +1312,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 获取个人的所有对戏存档
   app.get('/api/users/:id/rp_archives', (req, res) => {
     const userId = req.params.id;
     const archives = db.prepare(`SELECT * FROM rp_archives WHERE participants LIKE ? ORDER BY createdAt DESC`).all(`%${userId}%`) as any[];
@@ -1407,7 +1321,6 @@ async function startServer() {
     res.json({ success: true, archives });
   });
 
-  // 获取全服的所有对戏存档 (用于管理员)
   app.get('/api/admin/rp_archives', (_req, res) => {
     const archives = db.prepare('SELECT * FROM rp_archives ORDER BY createdAt DESC').all() as any[];
     for (let arc of archives) {
@@ -1415,11 +1328,6 @@ async function startServer() {
     }
     res.json({ success: true, archives });
   });
-
-
-  // ==========================================
-  // 👇 前端路由挂载和监听端口必须放在整个函数的最后面 👇
-  // ==========================================
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
@@ -1449,82 +1357,6 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
   });
-  // server.ts
-
-// --- 管理员：怪物管理 ---
-app.get('/api/admin/monsters', (req, res) => {
-  res.json({ success: true, monsters: db.prepare('SELECT * FROM monsters').all() });
-});
-
-app.post('/api/admin/monsters', (req, res) => {
-  const { name, description, avatarUrl, attackType, power, hp, rarity } = req.body;
-  db.prepare(`INSERT INTO monsters (name, description, avatarUrl, attackType, power, hp, rarity) VALUES (?, ?, ?, ?, ?, ?, ?)` )
-    .run(name, description, avatarUrl, attackType, power, hp, rarity);
-  res.json({ success: true });
-});
-
-app.delete('/api/admin/monsters/:id', (req, res) => {
-  db.prepare('DELETE FROM monsters WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
-});
-
-// --- 游戏逻辑：探索战斗结算 ---
-app.post('/api/explore/combat', (req, res) => {
-  const { userId } = req.body;
-  
-  // 1. 随机抽取一个怪物
-  const monster = db.prepare('SELECT * FROM monsters ORDER BY RANDOM() LIMIT 1').get() as any;
-  if (!monster) return res.json({ success: false, message: '界外区域一片死寂，没有怪物出没。' });
-
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-  
-  // 2. 战斗胜负算法 (示例：根据属性比拼)
-  // 如果怪物攻击肉体，比拼 physicalRank；如果是精神，比拼 mentalRank
-  // 假设 Rank 映射为数值：S:100, A:80, B:60, C:40, D:20
-  const rankMap: Record<string, number> = { 'S':100, 'A':80, 'B':60, 'C':40, 'D':20, '—':0 };
-  const userPower = monster.attackType === 'physical' 
-    ? (rankMap[user.physicalRank] || 10) 
-    : (rankMap[user.mentalRank] || 10);
-  
-  const winChance = (userPower / (userPower + monster.power)) * 100;
-  const isWin = Math.random() * 100 < winChance;
-
-  if (isWin) {
-    // 胜利：提升 5% 精神/肉体进度 (这里假设进度满100会升阶)
-    db.prepare(`
-      UPDATE users 
-      SET mentalProgress = MIN(100, mentalProgress + 5),
-          trainCount = trainCount + 1,
-          gold = gold + ?
-      WHERE id = ?
-    `).run(monster.power * 2, userId);
-
-    res.json({
-      success: true,
-      isWin: true,
-      monster,
-      message: `战斗胜利！你击败了 [${monster.name}]。你的精神与肉体在磨砺中变强了（进度+5%），并搜刮到 ${monster.power * 2}G。`
-    });
-  } else {
-    // 失败：扣除 10% 各项属性，回城
-    // 这里的“回到城中”通过修改 currentLocation 为 'tower_of_life' 实现
-    db.prepare(`
-      UPDATE users 
-      SET hp = hp * 0.9,
-          mp = mp * 0.9,
-          mentalProgress = MAX(0, mentalProgress - 10),
-          currentLocation = 'tower_of_life'
-      WHERE id = ?
-    `).run(userId);
-
-  res.json({
-      success: true,
-      isWin: false,
-      monster,
-      message: `你被 [${monster.name}] 的${monster.attackType === 'physical' ? '重击' : '精神尖刺'}击溃了！你损失了10%的生命与精神强度，并被救生舱强制传送回了命之塔。`
-    });
-  }
-});
 }
 
 startServer();

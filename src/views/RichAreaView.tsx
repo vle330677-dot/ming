@@ -290,7 +290,7 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
                         <h3 className="text-2xl font-black text-slate-800 mb-2">购置顶级庄园</h3>
                         <p className="text-sm text-slate-500 leading-relaxed max-w-xs mx-auto">
                           东区只为真正的财富拥有者敞开大门。<br/>
-                          <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded">入住验资条件：资产 &gt; 10,000G</span>  
+                          <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded">入住验资条件：资产 &gt; 10,000G</span>
                         </p>
                       </div>
 
@@ -383,5 +383,4 @@ function EliteCard({ title, sub, qualified, onClick }: any) {
       {!qualified && <span className="text-[10px] text-red-500 bg-red-50 px-2 py-1 rounded-lg font-bold border border-red-100">等级不够</span>}
     </button>
   );
-
 }
