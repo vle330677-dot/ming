@@ -1,6 +1,7 @@
+# 使用 slim 镜像替代 alpine
 FROM node:20-slim
 
-# 安装原生模块编译所需的系统依赖
+# 安装编译 better-sqlite3 所需的系统依赖
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
