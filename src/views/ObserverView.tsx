@@ -260,10 +260,11 @@ export function ObserverView({ user, onExit, showToast, fetchGlobalData }: Props
                       {!isObserver ? (
                         <>
                           <div className="p-4 bg-green-900/10 border border-green-800 text-xs text-green-500 font-mono leading-relaxed">
-                            <span className="text-green-400 font-bold">> SYSTEM CHECK:</span><br/>
-                            > 正在扫描访客生物特征...<br/>
-                            > 信息就是力量，而我们掌控着最大的服务器。<br/>
-                            > <span className="text-red-500">RESTRICTION:</span> 年满16岁方可被授予访问权限。
+                            {/* 修复：将 > 替换为 &gt; */}
+                            <span className="text-green-400 font-bold">&gt; SYSTEM CHECK:</span><br/>
+                            &gt; 正在扫描访客生物特征...<br/>
+                            &gt; 信息就是力量，而我们掌控着最大的服务器。<br/>
+                            &gt; <span className="text-red-500">RESTRICTION:</span> 年满16岁方可被授予访问权限。
                           </div>
                           
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -356,7 +357,8 @@ export function ObserverView({ user, onExit, showToast, fetchGlobalData }: Props
                       {/* 人员档案 */}
                       {libraryTab === 'records' && (
                         <div className="space-y-2 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
-                          <p className="text-xs text-green-700 mb-4 font-mono">> QUERYING GLOBAL USER DATABASE...</p>
+                          {/* 修复：将 > 替换为 &gt; */}
+                          <p className="text-xs text-green-700 mb-4 font-mono">&gt; QUERYING GLOBAL USER DATABASE...</p>
                           {allUsers.filter(u => u.status !== 'dead').length === 0 && <p className="text-green-800 text-sm">暂无存活人员记录。</p>}
                           {allUsers.filter(u => u.status !== 'dead').map(u => (
                             <div key={u.id} className="p-3 border border-green-900/30 bg-green-900/5 flex justify-between items-center hover:border-green-600 hover:bg-green-900/10 transition-colors">
@@ -375,7 +377,8 @@ export function ObserverView({ user, onExit, showToast, fetchGlobalData }: Props
                       {/* 死亡名录 */}
                       {libraryTab === 'tombstones' && (
                         <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
-                          <p className="text-xs text-green-700 mb-4 font-mono">> RETRIEVING DECEASED RECORDS...</p>
+                          {/* 修复：将 > 替换为 &gt; */}
+                          <p className="text-xs text-green-700 mb-4 font-mono">&gt; RETRIEVING DECEASED RECORDS...</p>
                           {allUsers.filter(u => u.status === 'dead').length === 0 ? (
                             <p className="text-green-600 text-sm text-center py-8 opacity-50">数据正常，目前无人死亡。</p>
                           ) : (
@@ -397,7 +400,8 @@ export function ObserverView({ user, onExit, showToast, fetchGlobalData }: Props
                       {libraryTab === 'books' && (
                         <div className="space-y-4">
                           <div className="flex justify-between items-center mb-2">
-                            <p className="text-xs text-green-700 font-mono">> ACCESSING CLASSIFIED ARCHIVES...</p>
+                            {/* 修复：将 > 替换为 &gt; */}
+                            <p className="text-xs text-green-700 font-mono">&gt; ACCESSING CLASSIFIED ARCHIVES...</p>
                             {isObserver && !isWriting && (
                               <button onClick={() => setIsWriting(true)} className="flex items-center gap-1 text-xs bg-green-900/30 text-green-400 px-3 py-1.5 border border-green-600 hover:bg-green-700 hover:text-black transition-colors">
                                 <Feather size={14}/> 撰写新文献
