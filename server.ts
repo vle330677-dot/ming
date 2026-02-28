@@ -2,6 +2,7 @@ import express from 'express';
 import Database from 'better-sqlite3';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs'; // 【修复追加】引入 fs 模块用于创建目录和读取模板
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -11,10 +12,15 @@ const __dirname = path.dirname(__filename);
 
 // server.ts
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'data', 'game.db');
-// 确保文件夹存在（手动或在 Dockerfile 中创建）
+
+// 【修复1】确保数据库存放的目录存在，避免新项目启动时直接崩溃
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
 const db = new Database(dbPath);
 
-// 【修复1】启用 WAL 模式，提升 SQLite 高并发读写性能，避免 Database is locked
+// 启用 WAL 模式，提升 SQLite 高并发读写性能，避免 Database is locked
 db.pragma('journal_mode = WAL');
 
 // ================= 1. 数据库初始化 =================
@@ -244,7 +250,7 @@ db.exec(`
   );
 `);
 
-// 【修复2】动态补全字段，添加正则校验防御 SQL 注入
+// 动态补全字段，添加正则校验防御 SQL 注入
 const addColumn = (table: string, col: string, type: string) => {
   if (!/^[a-zA-Z0-9_]+$/.test(table) || !/^[a-zA-Z0-9_]+$/.test(col)) {
     console.warn(`Invalid table or column name in addColumn: ${table}.${col}`);
@@ -821,7 +827,6 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 【修复3】移除前端读取时的硬编码，要求数据库内的数据即真实表现
   app.get('/api/admin/users', (_req, res) => {
     try {
       const users = db.prepare('SELECT * FROM users ORDER BY id DESC').all();
@@ -876,7 +881,6 @@ async function startServer() {
     }
   });
 
-  // 【修复3】更新/批准用户时，若年龄小于16，从源头上写入一致的数据
   app.put('/api/admin/users/:id', (req, res) => {
     let { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
     
@@ -930,7 +934,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 【修复3】读取自身信息时，不再覆盖阵营数据展示，而是读取真实数据
+  // 读取所有用户数据的路由，尽量靠前放置避免覆盖
   app.get('/api/users/:name', (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE name = ?').get(req.params.name) as any;
     if (!user) return res.json({ success: false, message: 'User not found' });
@@ -954,7 +958,6 @@ async function startServer() {
     }
   });
 
-  // 【修复3】用户注册时，若未分化，从源头写入修正数据
   app.post('/api/users', (req, res) => {
     let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
     
@@ -1337,7 +1340,8 @@ async function startServer() {
     app.use('*', async (req, res, next) => {
       if (req.originalUrl.startsWith('/api')) return next();
       try {
-        let template = '<!DOCTYPE html><html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>';
+        // 【修复2】读取真正的 index.html 模板内容而不是硬编码，以支持外部样式表
+        let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
         template = await vite.transformIndexHtml(req.originalUrl, template);
         res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
       } catch (e) {
@@ -1359,4 +1363,8 @@ async function startServer() {
   });
 }
 
-startServer();
+// 【修复3】捕捉并处理异步入口错误，避免隐式崩溃
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
