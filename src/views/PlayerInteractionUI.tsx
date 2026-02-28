@@ -6,11 +6,17 @@ import {
 } from 'lucide-react';
 import { User } from '../types';
 
+export interface RPStartResult {
+  ok: boolean;
+  sessionId?: string;
+  message?: string;
+}
+
 interface Props {
   currentUser: User;
   targetUser: User;
   onClose: () => void;
-  onStartRP: (target: User) => Promise<boolean>; // ✅ 统一为返回成功态
+  onStartRP: (target: User) => Promise<RPStartResult>;
   showToast: (msg: string) => void;
 }
 
@@ -29,7 +35,8 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
 
   const saveNote = async () => {
     await fetch('/api/notes', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ownerId: currentUser.id, targetId: targetUser.id, content: noteContent })
     });
     showToast('私人笔记已保存');
@@ -74,15 +81,15 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
   const startRPNow = async () => {
     try {
       setIsStartingRP(true);
-      const ok = await onStartRP(targetUser);
-      if (ok) {
-        onClose(); // ✅ 只有成功创建会话才关闭
+      const result = await onStartRP(targetUser);
+      if (result.ok) {
+        onClose();
       } else {
-        showToast('建立对戏连接失败，请稍后重试');
+        showToast(result.message || '建立连接失败：未拿到会话ID');
       }
     } catch (e) {
       console.error(e);
-      showToast('建立对戏连接失败，请稍后重试');
+      showToast('建立连接失败，请稍后重试');
     } finally {
       setIsStartingRP(false);
     }
@@ -102,12 +109,10 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         const rankMap: Record<string, number> = { 'SSS': 7, 'SS': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2, 'D': 1, '无': 0 };
         const myScore = rankMap[currentUser.mentalRank || '无'] + rankMap[currentUser.physicalRank || '无'];
         const tScore = rankMap[targetUser.mentalRank || '无'] + rankMap[targetUser.physicalRank || '无'];
-
         await fetch('/api/interact/combat', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ attackerId: currentUser.id, defenderId: targetUser.id, attackerScore: myScore, defenderScore: tScore })
         });
-
         await fetch('/api/combat/end', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: currentUser.id })
@@ -115,7 +120,6 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         break;
       }
 
-      // ✅ 补齐偷窃
       case 'steal': {
         const res = await fetch('/api/interact/steal', {
           method: 'POST',
@@ -197,9 +201,6 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
 
           <div className="mt-4 bg-slate-900/90 border border-slate-700 p-4 rounded-xl w-80 text-center shadow-xl backdrop-blur">
             <h4 className="text-lg font-black text-white mb-1">{targetUser.name}</h4>
-            <p className="text-xs text-sky-400 font-bold tracking-widest mb-3 uppercase border-b border-slate-700 pb-2">
-              ??? · ???
-            </p>
             <p className="text-sm text-slate-300 italic">"{perspectiveText}"</p>
             {isActionPending && <p className="text-[10px] text-amber-400 mt-2">等待对方处理跳过请求...</p>}
           </div>
@@ -214,22 +215,20 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
             color="bg-sky-600 hover:bg-sky-500"
             disabled={isStartingRP}
           />
-
           <ActionButton onClick={() => handleAction('combat')} icon={<Swords />} label="发起战斗" cls="top-12 left-12" color="bg-rose-600 hover:bg-rose-500" />
           <ActionButton onClick={() => showToast('已发送组队/纠缠请求')} icon={<Users />} label="组队纠缠" cls="top-12 right-12" color="bg-indigo-600 hover:bg-indigo-500" />
           <ActionButton onClick={() => handleAction('steal')} icon={<HandMetal />} label="暗中偷窃" cls="top-1/2 left-0 -translate-y-1/2" color="bg-slate-700 hover:bg-slate-600" />
           <ActionButton onClick={() => setShowNotes(true)} icon={<BookOpen />} label="小本本" cls="top-1/2 right-0 -translate-y-1/2" color="bg-amber-600 hover:bg-amber-500" />
-          <ActionButton onClick={() => { }} icon={<Coins />} label="发起交易" cls="bottom-12 left-12" color="bg-emerald-600 hover:bg-emerald-500" />
+          <ActionButton onClick={() => {}} icon={<Coins />} label="发起交易" cls="bottom-12 left-12" color="bg-emerald-600 hover:bg-emerald-500" />
           <ActionButton onClick={() => showToast('举报已提交至塔区议会')} icon={<ShieldAlert />} label="举报违规" cls="bottom-12 right-12" color="bg-red-800 hover:bg-red-700" />
-
           {currentUser.role === '鬼魂' && (
-            <ActionButton onClick={() => handleAction('prank')} icon={<Ghost />} label="恶作剧" cls="bottom-0 left-1/2 -translate-x-1/2" color="bg-violet-600 hover:bg-violet-500 shadow-[0_0_20px_rgba(139,92,246,0.5)]" />
+            <ActionButton onClick={() => handleAction('prank')} icon={<Ghost />} label="恶作剧" cls="bottom-0 left-1/2 -translate-x-1/2" color="bg-violet-600 hover:bg-violet-500" />
           )}
           {currentUser.role === '向导' && targetUser.role === '哨兵' && (
-            <ActionButton onClick={() => handleAction('soothe')} icon={<HeartHandshake />} label="精神抚慰" cls="bottom-0 left-1/2 -translate-x-1/2" color="bg-emerald-500 hover:bg-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.5)]" />
+            <ActionButton onClick={() => handleAction('soothe')} icon={<HeartHandshake />} label="精神抚慰" cls="bottom-0 left-1/2 -translate-x-1/2" color="bg-emerald-500 hover:bg-emerald-400" />
           )}
           {currentUser.role === '哨兵' && (
-            <ActionButton onClick={() => handleAction('probe')} icon={<Eye />} label="精神探查" cls="bottom-0 left-1/2 -translate-x-1/2" color="bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.5)]" />
+            <ActionButton onClick={() => handleAction('probe')} icon={<Eye />} label="精神探查" cls="bottom-0 left-1/2 -translate-x-1/2" color="bg-blue-600 hover:bg-blue-500" />
           )}
         </div>
 
