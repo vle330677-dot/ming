@@ -12,6 +12,10 @@ interface Props {
 const USER_TOKEN_KEY = 'USER_TOKEN';
 const USER_NAME_KEY = 'USER_NAME';
 
+const getUserId = (user: any) => String(user?.id ?? user?._id ?? user?.name ?? '');
+const towerTriggerKey = (uid: string) => `tower_newcomer_welcome_trigger_${uid}`;
+const towerSeenKey = (uid: string) => `tower_newcomer_welcome_seen_${uid}`;
+
 export function LoginView({ onNavigate, setUserName, setUser }: Props) {
   const [step, setStep] = useState<'name' | 'password'>('name');
   const [name, setName] = useState('');
@@ -23,24 +27,51 @@ export function LoginView({ onNavigate, setUserName, setUser }: Props) {
   const [tempUser, setTempUser] = useState<User | null>(null);
 
   const processUserEntry = async (user: User) => {
-    setUserName((user as any).name);
-    setUser(user);
+    const u = user as any;
+    const uid = getUserId(u);
 
-    if ((user as any).status === 'approved') {
-      onNavigate('GAME');
-    } else if ((user as any).status === 'pending') {
-      setError('您的人设还未通过审核，请前往审核群：740196067联系管理员');
-    } else if ((user as any).status === 'rejected') {
-      setError('您的身份档案不被塔认可，请回到审核群重新提交');
-      fetch(`/api/users/${(user as any).id}`, { method: 'DELETE' }).catch(() => void 0);
-    } else if ((user as any).status === 'dead') {
-      setError('该身份已死亡，请使用新的名字。');
-    } else if ((user as any).status === 'ghost') {
-      onNavigate('GAME');
-    } else {
-      // 未知状态兜底
-      onNavigate('GAME');
+    setUserName(u.name);
+    setUser(user);
+    localStorage.setItem(USER_NAME_KEY, u.name || name.trim());
+
+    if (u.status === 'approved') {
+      // 审核通过：优先进入命之塔；欢迎弹窗只给“未看过”的用户触发一次
+      const seen = uid ? localStorage.getItem(towerSeenKey(uid)) === '1' : false;
+
+      if (!seen) {
+        if (uid) sessionStorage.setItem(towerTriggerKey(uid), '1');
+        onNavigate('TOWER_OF_LIFE' as ViewState);
+      } else {
+        // 老用户保持原体验
+        onNavigate('GAME' as ViewState);
+      }
+      return;
     }
+
+    if (u.status === 'pending') {
+      // 不再停留 Login 报错，直接进入待审核页（由 App 轮询）
+      onNavigate('PENDING' as ViewState);
+      return;
+    }
+
+    if (u.status === 'rejected') {
+      setError('您的身份档案不被塔认可，请回到审核群重新提交');
+      fetch(`/api/users/${u.id}`, { method: 'DELETE' }).catch(() => void 0);
+      return;
+    }
+
+    if (u.status === 'dead') {
+      setError('该身份已死亡，请使用新的名字。');
+      return;
+    }
+
+    if (u.status === 'ghost') {
+      onNavigate('GAME' as ViewState);
+      return;
+    }
+
+    // 未知状态兜底
+    onNavigate('GAME' as ViewState);
   };
 
   const fetchUserByName = async (rawName: string) => {
@@ -60,7 +91,7 @@ export function LoginView({ onNavigate, setUserName, setUser }: Props) {
       const data = await fetchUserByName(name.trim());
 
       if (data.success && data.user) {
-        // 老逻辑：存在用户则进入密码输入（无论是否设置密码，统一走后端登录更安全）
+        // 存在用户：进入密码步骤
         setTempUser(data.user as User);
         setStep('password');
       } else {
@@ -131,7 +162,7 @@ export function LoginView({ onNavigate, setUserName, setUser }: Props) {
         return;
       }
 
-      // 3) 若老数据无密码，直接放行（兼容历史）
+      // 3) 老数据无密码，直接放行（兼容历史）
       if (tempUser && !(tempUser as any).password) {
         localStorage.setItem(USER_NAME_KEY, (tempUser as any).name || name.trim());
         await processUserEntry(tempUser);
