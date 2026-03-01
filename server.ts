@@ -1026,8 +1026,6 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/users', (req, res) => {
-  let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
-  app.post('/api/users', (req, res) => {
   let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body || {};
 
   const isUndiff = role === '未分化' || Number(age) < 16;
@@ -1049,6 +1047,7 @@ app.post('/api/users', (req, res) => {
     res.status(500).json({ success: false, message: e.message });
   }
 });
+
   const finalGold = Number(gold || 0);
 
   if (finalAge < 16) role = '未分化';
