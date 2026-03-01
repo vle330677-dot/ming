@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart, ArrowLeft, Users } from 'lucide-react';
+import { X, MapPin, Settings, Skull, Cross, Send, Trash2, Heart, ArrowLeft, Users, Gamepad2 } from 'lucide-react';
 import { User } from '../types';
 
 // ================== 组件导入 ==================
@@ -18,6 +18,11 @@ import { RichAreaView } from './RichAreaView';
 import { DemonSocietyView } from './DemonSocietyView';
 import { SpiritBureauView } from './SpiritBureauView';
 import { ObserverView } from './ObserverView';
+
+// ===== 新增：自定义游戏 =====
+import { CustomGamePlayerView } from './CustomGamePlayerView';
+import { CustomGameRunView } from './CustomGameRunView';
+import { GlobalAnnouncementPrompt } from './GlobalAnnouncementPrompt';
 
 // ================== 资源映射配置 ==================
 const LOCATION_BG_MAP: Record<string, string> = {
@@ -38,13 +43,13 @@ const LOCATIONS = [
   { id: 'tower_of_life', name: '命之塔', x: 50, y: 48, type: 'safe', description: '世界的绝对中心，神明降下神谕的圣地。' },
   { id: 'sanctuary', name: '圣所', x: 42, y: 42, type: 'safe', description: '未分化幼崽的摇篮，充满治愈与宁静的气息。' },
   { id: 'london_tower', name: '伦敦塔', x: 67, y: 35, type: 'safe', description: '哨兵与向导的最高学府与管理机构。' },
-  { id: 'rich_area', name: '富人区', x: 70, y: 50, type: 'danger', description: '流光溢彩的销金窟，权贵们在此挥霍财富。' },
-  { id: 'slums', name: '贫民区', x: 25, y: 48, type: 'danger', description: '混乱、肮脏，但充满生机。' },
-  { id: 'demon_society', name: '恶魔会', x: 12, y: 20, type: 'danger', description: '混乱之王的狂欢所。(未知区域)' },
-  { id: 'guild', name: '工会', x: 48, y: 78, type: 'danger', description: '鱼龙混杂的地下交易网与冒险者聚集地。' },
-  { id: 'army', name: '军队', x: 50, y: 18, type: 'danger', description: '人类最坚实的物理防线。' },
-  { id: 'observers', name: '观察者', x: 65, y: 15, type: 'danger', description: '记录世界历史与真相的隐秘结社。' },
-  { id: 'paranormal_office', name: '灵异管理所', x: 88, y: 15, type: 'danger', description: '专门处理非自然精神波动的神秘机关。' }
+  { id: 'rich_area', name: '富人区', x: 70, y: 50, type: 'safe', description: '流光溢彩的销金窟，权贵们在此挥霍财富。' },
+  { id: 'slums', name: '贫民区', x: 25, y: 48, type: 'safe', description: '混乱、肮脏，但充满生机。' },
+  { id: 'demon_society', name: '恶魔会', x: 12, y: 20, type: 'safe', description: '混乱之王的狂欢所。(未知区域)' },
+  { id: 'guild', name: '工会', x: 48, y: 78, type: 'safe', description: '鱼龙混杂的地下交易网与冒险者聚集地。' },
+  { id: 'army', name: '军队', x: 50, y: 18, type: 'safe', description: '人类最坚实的物理防线。' },
+  { id: 'observers', name: '观察者', x: 65, y: 15, type: 'safe', description: '记录世界历史与真相的隐秘结社。' },
+  { id: 'paranormal_office', name: '灵异管理所', x: 88, y: 15, type: 'safe', description: '专门处理非自然精神波动的神秘机关。' }
 ];
 
 const SAFE_ZONES = ['tower_of_life', 'sanctuary', 'london_tower'];
@@ -86,6 +91,10 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [rpPing, setRPPing] = useState(false);
   const [isCreatingRP, setIsCreatingRP] = useState(false);
 
+  // ===== 自定义游戏状态（新增）=====
+  const [showCustomGamePanel, setShowCustomGamePanel] = useState(false);
+  const [activeCustomRunId, setActiveCustomRunId] = useState<string | null>(null);
+
   const [showSettings, setShowSettings] = useState(false);
   const [showDeathForm, setShowDeathForm] = useState<'death' | 'ghost' | null>(null);
   const [deathText, setDeathText] = useState('');
@@ -98,6 +107,10 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
   const [expandedTombstone, setExpandedTombstone] = useState<number | null>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
+
+  const [showWildExplore, setShowWildExplore] = useState(false);
+const [wildBusy, setWildBusy] = useState(false);
+
 
   const currentBackgroundImage = useMemo(() => {
     if (activeView && LOCATION_BG_MAP[activeView]) return LOCATION_BG_MAP[activeView];
@@ -311,12 +324,13 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
       return;
     }
 
-    if (isStudentAge && action === 'enter' && !SAFE_ZONES.includes(selectedLocation.id)) {
-      if (!window.confirm('你还没有毕业，强行加入仅能获得最低职位。确定吗？')) {
-        setActiveView('london_tower');
-        return;
-      }
-    }
+    const hasFaction = !!(user.faction && user.faction !== '无');
+if (isStudentAge && !hasFaction && action === 'enter' && !SAFE_ZONES.includes(selectedLocation.id)) {
+  if (!window.confirm('你尚未加入阵营，当前进入将按最低职位处理，是否继续？')) {
+    return;
+  }
+}
+
 
     if (action === 'stay') {
       await fetch(`/api/users/${user.id}/location`, {
@@ -600,6 +614,8 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </div>
       )}
 
+
+
       {/* 地图容器 */}
       <AnimatePresence mode="wait">
         {!activeView && (
@@ -765,6 +781,48 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </div>
       </div>
 
+      <AnimatePresence>
+  {showWildExplore && (
+    <div className="fixed inset-0 z-[9997] bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-5">
+        <h3 className="text-white font-black mb-2">界域探索</h3>
+        <p className="text-slate-300 text-sm mb-4">进入野外遭遇战，可能获得奖励，也可能受伤。</p>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              setWildBusy(true);
+              try {
+                const res = await fetch('/api/explore/wild-encounter', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId: user.id, locationId: effectiveLocationId || 'wild' })
+                });
+                const data = await res.json();
+                showToast(data.message || '探索完成');
+                fetchGlobalData();
+                setShowWildExplore(false);
+              } finally {
+                setWildBusy(false);
+              }
+            }}
+            disabled={wildBusy}
+            className="flex-1 py-2 rounded bg-rose-600 text-white font-bold"
+          >
+            {wildBusy ? '遭遇中...' : '开始遭遇'}
+          </button>
+          <button
+            onClick={() => setShowWildExplore(false)}
+            className="flex-1 py-2 rounded bg-slate-700 text-white font-bold"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+</AnimatePresence>
+
+
       {/* 地点详情弹窗 */}
       <AnimatePresence>
         {selectedLocation && !activeView && (
@@ -865,16 +923,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           />
         )}
       </AnimatePresence>
-      <AnimatePresence>
-  {rpSessionId && rpWindowOpen && (
-    <RoleplayWindow
-      sessionId={rpSessionId}
-      currentUser={user}
-      onClose={() => setRPWindowOpen(false)}
-    />
-  )}
-</AnimatePresence>
-
 
       {(user.status === 'pending_death' || user.status === 'pending_ghost') && (
         <div className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md">
@@ -944,6 +992,15 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           </span>
         </button>
       </div>
+      <div className="fixed bottom-6 left-[300px] z-[160]">
+  <button
+    onClick={() => setShowWildExplore(true)}
+    className="px-4 py-3 rounded-2xl font-black text-xs shadow-xl bg-rose-600 text-white hover:bg-rose-500"
+  >
+    前往界域探索
+  </button>
+</div>
+
 
       {/* 左下 对戏聊天按钮（始终显示） */}
       <div className="fixed bottom-6 left-6 z-[160]">
@@ -964,6 +1021,17 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           {rpPing && !rpWindowOpen && (
             <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-rose-500 border border-white" />
           )}
+        </button>
+      </div>
+
+      {/* 左下 自定义游戏入口（新增） */}
+      <div className="fixed bottom-6 left-44 z-[160]">
+        <button
+          onClick={() => setShowCustomGamePanel((v) => !v)}
+          className="relative px-4 py-3 rounded-2xl font-black text-xs shadow-xl transition-all bg-indigo-600 text-white hover:bg-indigo-500 flex items-center gap-2"
+        >
+          <Gamepad2 size={14} />
+          自定义游戏
         </button>
       </div>
 
@@ -1109,6 +1177,58 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           />
         )}
       </AnimatePresence>
+
+      {/* ===== 新增：自定义游戏面板 ===== */}
+      <AnimatePresence>
+        {showCustomGamePanel && (
+          <div className="fixed inset-0 z-[9996] bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+            <div className="max-w-3xl mx-auto mt-10">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 mb-3 flex justify-between items-center">
+                <h3 className="font-black text-white">自定义游戏中心</h3>
+                <button
+                  onClick={() => setShowCustomGamePanel(false)}
+                  className="px-3 py-1 rounded bg-slate-700 text-white"
+                >
+                  关闭
+                </button>
+              </div>
+
+              {/* 兼容旧版 Props（as any 避免你还没改 CustomGamePlayerView 时 TS 报错） */}
+              <CustomGamePlayerView
+                {...({
+                  user,
+                  showToast,
+                  onEnterRun: (runId: string) => {
+                    setActiveCustomRunId(runId);
+                    setShowCustomGamePanel(false);
+                  }
+                } as any)}
+              />
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ===== 新增：副本运行页 ===== */}
+      <AnimatePresence>
+        {activeCustomRunId && (
+          <CustomGameRunView
+            user={user}
+            runId={activeCustomRunId}
+            showToast={showToast}
+            onExit={() => setActiveCustomRunId(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ===== 新增：全服公告弹窗（投票/开局）===== */}
+      <GlobalAnnouncementPrompt
+        user={user}
+        showToast={showToast}
+        onEnterRun={(runId) => {
+          setActiveCustomRunId(runId);
+        }}
+      />
 
       {/* 死亡表单 */}
       {showDeathForm && (

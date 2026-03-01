@@ -6,10 +6,12 @@ type RPMessageRow = {
   sessionId: string;
   senderId: number | null;
   senderName: string;
+  senderAvatar?: string | null; // 新增
   content: string;
   type: 'user' | 'system' | 'text';
   createdAt: string;
 };
+
 
 type MemberRow = {
   sessionId: string;
@@ -175,11 +177,15 @@ export function createRpRouter(db: Database.Database) {
       `).all(sessionId) as MemberRow[];
 
       const messages = db.prepare(`
-        SELECT id, sessionId, senderId, senderName, content, type, createdAt
-        FROM active_rp_messages
-        WHERE sessionId = ?
-        ORDER BY id ASC
-      `).all(sessionId) as RPMessageRow[];
+  SELECT
+    m.id, m.sessionId, m.senderId, m.senderName, m.content, m.type, m.createdAt,
+    u.avatarUrl as senderAvatar
+  FROM active_rp_messages m
+  LEFT JOIN users u ON u.id = m.senderId
+  WHERE m.sessionId = ?
+  ORDER BY m.id ASC
+`).all(sessionId) as RPMessageRow[];
+
 
       return res.json({
         success: true,

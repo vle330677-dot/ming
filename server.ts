@@ -5,9 +5,13 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRpRouter } from './server/rp.routes';
+import { createCustomGameRouter } from './server/routes/customGame.routes';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
 
 dotenv.config();
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,6 +66,135 @@ db.exec(`
     fury INTEGER DEFAULT 0,
     partyId TEXT DEFAULT NULL
   );
+  CREATE TABLE IF NOT EXISTS world_activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  userName TEXT NOT NULL,
+  avatarUrl TEXT,
+  locationId TEXT NOT NULL,
+  actionType TEXT NOT NULL,   -- explore_item / explore_skill / wild_encounter
+  actionText TEXT NOT NULL,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+  -- 自定义游戏主表
+CREATE TABLE IF NOT EXISTS custom_games (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  theme TEXT,
+  ruleText TEXT,
+  creatorId INTEGER NOT NULL,
+  creatorName TEXT NOT NULL,
+  creatorType TEXT DEFAULT 'player',
+  status TEXT DEFAULT 'SUBMITTED_IDEA',
+  currentVersion INTEGER DEFAULT 0,
+  voteRound INTEGER DEFAULT 0,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 审核记录
+CREATE TABLE IF NOT EXISTS custom_game_reviews (
+  id TEXT PRIMARY KEY,
+  gameId TEXT NOT NULL,
+  stage TEXT NOT NULL, -- idea/map/start
+  reviewerId INTEGER,
+  decision TEXT NOT NULL, -- approved/rejected
+  comment TEXT,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 地图版本
+CREATE TABLE IF NOT EXISTS custom_game_maps (
+  id TEXT PRIMARY KEY,
+  gameId TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  editorId INTEGER,
+  mapJson TEXT,
+  dropPointJson TEXT,
+  announcementText TEXT,
+  layoutRuleText TEXT,
+  isApproved INTEGER DEFAULT 0,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 投票
+CREATE TABLE IF NOT EXISTS custom_game_votes (
+  id TEXT PRIMARY KEY,
+  gameId TEXT NOT NULL,
+  voteRound INTEGER NOT NULL,
+  voterId INTEGER NOT NULL,
+  vote TEXT NOT NULL, -- yes/no
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(gameId, voteRound, voterId)
+);
+
+-- 运行实例
+CREATE TABLE IF NOT EXISTS custom_game_runs (
+  id TEXT PRIMARY KEY,
+  gameId TEXT NOT NULL,
+  mapVersion INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'running',
+  startedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+  endedAt DATETIME DEFAULT NULL,
+  initiatorId INTEGER,
+  onlineCountAtVote INTEGER DEFAULT 0,
+  yesCount INTEGER DEFAULT 0,
+  noCount INTEGER DEFAULT 0
+);
+
+-- 运行内玩家数据（与原世界隔离）
+CREATE TABLE IF NOT EXISTS custom_game_run_players (
+  runId TEXT NOT NULL,
+  userId INTEGER NOT NULL,
+  userName TEXT,
+  spawnPoint TEXT,
+  currency INTEGER DEFAULT 0,
+  inventoryJson TEXT DEFAULT '[]',
+  score INTEGER DEFAULT 0,
+  isAlive INTEGER DEFAULT 1,
+  joinedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+  baseSnapshotJson TEXT,
+  PRIMARY KEY (runId, userId)
+);
+
+-- 运行事件日志
+CREATE TABLE IF NOT EXISTS custom_game_run_events (
+  id TEXT PRIMARY KEY,
+  runId TEXT NOT NULL,
+  eventType TEXT,
+  userId INTEGER,
+  payloadJson TEXT,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 全局累计统计
+CREATE TABLE IF NOT EXISTS custom_game_player_stats (
+  userId INTEGER PRIMARY KEY,
+  totalScore INTEGER DEFAULT 0,
+  totalCurrency INTEGER DEFAULT 0,
+  gamesPlayed INTEGER DEFAULT 0,
+  wins INTEGER DEFAULT 0,
+  updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 公告
+CREATE TABLE IF NOT EXISTS announcements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT DEFAULT 'system',
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  extraJson TEXT,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- 在线心跳
+CREATE TABLE IF NOT EXISTS presence_heartbeats (
+  userId INTEGER PRIMARY KEY,
+  lastSeenAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
   -- ===== RP 会话系统（拆分路由用）=====
   CREATE TABLE IF NOT EXISTS active_rp_sessions (
@@ -258,7 +391,79 @@ db.exec(`
     status TEXT DEFAULT 'active',
     endsAt DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS admin_whitelist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,          -- 管理员显示名/代号
+  code_name TEXT,                     -- 可选代号
+  enabled INTEGER DEFAULT 1,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS admin_action_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  adminName TEXT NOT NULL,
+  action TEXT NOT NULL,
+  targetType TEXT,
+  targetId TEXT,
+  detail TEXT,
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token TEXT PRIMARY KEY,
+  userId INTEGER NOT NULL,
+  userName TEXT NOT NULL,
+  role TEXT DEFAULT 'player',         -- player/admin
+  createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+  lastSeenAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+  revokedAt DATETIME
+);
+CREATE TABLE IF NOT EXISTS review_rules (
+    module_key TEXT PRIMARY KEY,
+    required_approvals INTEGER NOT NULL DEFAULT 2,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS review_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    module_key TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    creator_user_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending/approved/rejected
+    payload_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(module_key, target_type, target_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS review_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    admin_id INTEGER NOT NULL,
+    admin_name TEXT NOT NULL,
+    decision TEXT NOT NULL, -- approve/reject
+    comment TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(task_id, admin_id)
+  );
 `);
+
+const seedReviewRule = db.prepare(`
+  INSERT INTO review_rules(module_key, required_approvals)
+  VALUES (?, ?)
+  ON CONFLICT(module_key) DO NOTHING
+`);
+[
+  ['user_join', 2],
+  ['user_death', 2],
+  ['user_ghost', 2],
+  ['custom_idea', 2],
+  ['custom_map', 2],
+  ['custom_start', 2]
+].forEach(([k, n]) => seedReviewRule.run(k, n));
+
 
 
 // 动态补全字段，添加正则校验防御 SQL 注入
@@ -311,6 +516,90 @@ addColumn('global_items', 'faction', "TEXT DEFAULT '通用'");
 addColumn('global_items', 'tier', "TEXT DEFAULT '低阶'");
 addColumn('global_items', 'itemType', "TEXT DEFAULT '回复道具'");
 addColumn('global_items', 'effectValue', "INTEGER DEFAULT 0");
+addColumn('custom_game_runs', 'stageCount', 'INTEGER DEFAULT 1');
+addColumn('custom_game_runs', 'currentStage', 'INTEGER DEFAULT 1');
+addColumn('custom_game_runs', 'stageConfigJson', "TEXT DEFAULT '[]'");
+addColumn('custom_game_runs', 'runtimeMapJson', 'TEXT');
+addColumn('custom_game_runs', 'runtimeDropJson', 'TEXT');
+addColumn('users', 'loginPasswordHash', 'TEXT');  // 账号密码 hash
+addColumn('users', 'roomPasswordHash', 'TEXT');   // 房间密码 hash
+addColumn('users', 'adminAvatarUrl', 'TEXT');     // 管理员头像
+addColumn('users', 'forceOfflineAt', 'TEXT');     // 被顶号时间
+// ===== 兼容旧/新字段命名，避免 customGame.routes.ts 列不存在 =====
+const ensureCompatColumns = () => {
+  // announcements 双命名兼容
+  addColumn('announcements', 'payload', 'TEXT');
+  addColumn('announcements', 'created_at', 'DATETIME');
+
+  // custom_games
+  addColumn('custom_games', 'rule_text', 'TEXT');
+  addColumn('custom_games', 'creator_id', 'INTEGER');
+  addColumn('custom_games', 'creator_name', 'TEXT');
+  addColumn('custom_games', 'creator_type', 'TEXT');
+  addColumn('custom_games', 'current_version', 'INTEGER DEFAULT 0');
+  addColumn('custom_games', 'vote_round', 'INTEGER DEFAULT 0');
+  addColumn('custom_games', 'created_at', 'DATETIME');
+  addColumn('custom_games', 'updated_at', 'DATETIME');
+
+  // custom_game_reviews
+  addColumn('custom_game_reviews', 'game_id', 'TEXT');
+  addColumn('custom_game_reviews', 'reviewer_id', 'INTEGER');
+  addColumn('custom_game_reviews', 'created_at', 'DATETIME');
+
+  // custom_game_maps
+  addColumn('custom_game_maps', 'game_id', 'TEXT');
+  addColumn('custom_game_maps', 'editor_id', 'INTEGER');
+  addColumn('custom_game_maps', 'map_json', 'TEXT');
+  addColumn('custom_game_maps', 'drop_point_json', 'TEXT');
+  addColumn('custom_game_maps', 'announcement_text', 'TEXT');
+  addColumn('custom_game_maps', 'layout_rule_text', 'TEXT');
+  addColumn('custom_game_maps', 'is_approved', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_maps', 'created_at', 'DATETIME');
+
+  // custom_game_votes
+  addColumn('custom_game_votes', 'game_id', 'TEXT');
+  addColumn('custom_game_votes', 'vote_round', 'INTEGER');
+  addColumn('custom_game_votes', 'voter_id', 'INTEGER');
+  addColumn('custom_game_votes', 'created_at', 'DATETIME');
+
+  // custom_game_runs
+  addColumn('custom_game_runs', 'game_id', 'TEXT');
+  addColumn('custom_game_runs', 'map_version', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_runs', 'started_at', 'DATETIME');
+  addColumn('custom_game_runs', 'ended_at', 'DATETIME');
+  addColumn('custom_game_runs', 'initiator_id', 'INTEGER');
+  addColumn('custom_game_runs', 'online_count_at_vote', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_runs', 'yes_count', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_runs', 'no_count', 'INTEGER DEFAULT 0');
+
+  // custom_game_run_players
+  addColumn('custom_game_run_players', 'run_id', 'TEXT');
+  addColumn('custom_game_run_players', 'user_id', 'INTEGER');
+  addColumn('custom_game_run_players', 'user_name', 'TEXT');
+  addColumn('custom_game_run_players', 'spawn_point', 'TEXT');
+  addColumn('custom_game_run_players', 'inventory_json', 'TEXT');
+  addColumn('custom_game_run_players', 'is_alive', 'INTEGER DEFAULT 1');
+  addColumn('custom_game_run_players', 'joined_at', 'DATETIME');
+  addColumn('custom_game_run_players', 'base_snapshot_json', 'TEXT');
+
+  // custom_game_run_events
+  addColumn('custom_game_run_events', 'run_id', 'TEXT');
+  addColumn('custom_game_run_events', 'event_type', 'TEXT');
+  addColumn('custom_game_run_events', 'user_id', 'INTEGER');
+  addColumn('custom_game_run_events', 'payload_json', 'TEXT');
+  addColumn('custom_game_run_events', 'created_at', 'DATETIME');
+
+  // custom_game_player_stats
+  addColumn('custom_game_player_stats', 'user_id', 'INTEGER');
+  addColumn('custom_game_player_stats', 'total_score', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_player_stats', 'total_currency', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_player_stats', 'games_played', 'INTEGER DEFAULT 0');
+  addColumn('custom_game_player_stats', 'updated_at', 'DATETIME');
+};
+
+ensureCompatColumns();
+
+
 
 // ================= 2. 初始数据种子 =================
 const seedData = () => {
@@ -338,6 +627,11 @@ const seedData = () => {
     );
     initialItems.forEach((i) => insertItem.run(i.name, i.description, i.locationTag, i.price));
   }
+  db.prepare(`
+  INSERT OR IGNORE INTO admin_whitelist (name, code_name, enabled)
+  VALUES ('塔', 'tower_admin', 1)
+`).run();
+
 };
 seedData();
 
@@ -413,31 +707,405 @@ const deleteUserCascade = db.transaction((userId: number) => {
 });
 
 async function startServer() {
-  const app = express();
+  const app = express(); 
   const PORT = process.env.PORT || 3000;
+  const nowIso = () => new Date().toISOString();
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use('/api', createRpRouter(db));
+const hashPassword = async (plain: string) => bcrypt.hash(plain, 10);
+const verifyPassword = async (plain: string, hash?: string | null) => {
+  if (!hash) return false;
+  return bcrypt.compare(plain, hash);
+};
+const logWorldActivity = (userId: number, locationId: string, actionType: string, actionText: string) => {
+  const u = db.prepare(`SELECT name, avatarUrl FROM users WHERE id = ?`).get(userId) as any;
+  if (!u) return;
+  db.prepare(`
+    INSERT INTO world_activity_logs (userId, userName, avatarUrl, locationId, actionType, actionText)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(userId, u.name, u.avatarUrl || null, locationId, actionType, actionText);
+};
+
+
+const issueToken = () => crypto.randomBytes(24).toString('hex');
+
+const getBearerToken = (req: any) => {
+  const h = req.headers.authorization || '';
+  if (!h.startsWith('Bearer ')) return '';
+  return h.slice(7).trim();
+};
+
+const requireAdminAuth = (req: any, res: any, next: any) => {
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ success: false, message: '缺少管理员令牌' });
+
+  const s = db.prepare(`
+    SELECT * FROM user_sessions WHERE token = ? AND role='admin' AND revokedAt IS NULL
+  `).get(token) as any;
+  if (!s) return res.status(401).json({ success: false, message: '管理员会话失效' });
+
+  db.prepare(`UPDATE user_sessions SET lastSeenAt = CURRENT_TIMESTAMP WHERE token = ?`).run(token);
+  (req as any).admin = { userId: s.userId, name: s.userName, token: s.token };
+  next();
+};
+
+const requireUserAuth = (req: any, res: any, next: any) => {
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ success: false, message: '未登录' });
+
+  const s = db.prepare(`
+    SELECT * FROM user_sessions WHERE token = ? AND role='player' AND revokedAt IS NULL
+  `).get(token) as any;
+  if (!s) return res.status(401).json({ success: false, code: 'SESSION_REVOKED', message: '账号已在其他地方登录' });
+
+  const user = db.prepare(`SELECT forceOfflineAt FROM users WHERE id = ?`).get(s.userId) as any;
+  if (user?.forceOfflineAt) {
+    const forced = new Date(user.forceOfflineAt).getTime();
+    const created = new Date(s.createdAt).getTime();
+    if (forced > created) {
+      return res.status(401).json({ success: false, code: 'SESSION_KICKED', message: '你已被新登录踢下线' });
+    }
+  }
+
+  db.prepare(`UPDATE user_sessions SET lastSeenAt = CURRENT_TIMESTAMP WHERE token = ?`).run(token);
+  (req as any).user = { id: s.userId, name: s.userName, token: s.token };
+  next();
+};
+
+
+const writeAdminLog = (adminName: string, action: string, targetType?: string, targetId?: string, detail?: any) => {
+  db.prepare(`
+    INSERT INTO admin_action_logs (adminName, action, targetType, targetId, detail)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(adminName, action, targetType || null, targetId || null, detail ? JSON.stringify(detail) : null);
+
+    const payload = JSON.stringify({ targetType, targetId, detail: detail || null });
+  db.prepare(`
+    INSERT INTO announcements (type, title, content, extraJson, payload, createdAt, created_at)
+    VALUES ('admin_action', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(
+    `管理员操作`,
+    `管理员 ${adminName} ${action}`,
+    payload,
+    payload
+  );
+
+};
+type ReviewDecision = 'approve' | 'reject';
+
+const getRequiredApprovals = (moduleKey: string) => {
+  const row = db.prepare(`SELECT required_approvals FROM review_rules WHERE module_key=?`).get(moduleKey) as any;
+  return Math.max(1, Number(row?.required_approvals || 2));
+};
+
+const setRequiredApprovals = (moduleKey: string, n: number) => {
+  db.prepare(`
+    INSERT INTO review_rules(module_key, required_approvals, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(module_key) DO UPDATE SET
+      required_approvals=excluded.required_approvals,
+      updated_at=CURRENT_TIMESTAMP
+  `).run(moduleKey, Math.max(1, Number(n || 1)));
+};
+
+const ensureReviewTask = (opts: {
+  moduleKey: string;
+  targetType: string;
+  targetId: string | number;
+  creatorUserId?: number | null;
+  payload?: any;
+}) => {
+  const { moduleKey, targetType, targetId, creatorUserId = null, payload = null } = opts;
+  let task = db.prepare(`
+    SELECT * FROM review_tasks
+    WHERE module_key=? AND target_type=? AND target_id=?
+  `).get(moduleKey, targetType, String(targetId)) as any;
+
+  if (!task) {
+    const ret = db.prepare(`
+      INSERT INTO review_tasks(module_key, target_type, target_id, creator_user_id, status, payload_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(moduleKey, targetType, String(targetId), creatorUserId, payload ? JSON.stringify(payload) : null);
+
+    task = db.prepare(`SELECT * FROM review_tasks WHERE id=?`).get(ret.lastInsertRowid) as any;
+  }
+
+  return task;
+};
+
+const castVoteAndJudge = (opts: {
+  moduleKey: string;
+  targetType: string;
+  targetId: string | number;
+  creatorUserId?: number | null;
+  payload?: any;
+  adminId: number;
+  adminName: string;
+  decision: ReviewDecision;
+  comment?: string;
+}) => {
+  const task = ensureReviewTask(opts);
+
+  if (task.status !== 'pending') {
+    const required = getRequiredApprovals(opts.moduleKey);
+    return {
+      taskId: Number(task.id),
+      done: true,
+      status: task.status,
+      approveCount: 0,
+      rejectCount: 0,
+      required
+    };
+  }
+
+  if (task.creator_user_id && Number(task.creator_user_id) === Number(opts.adminId)) {
+    throw new Error('发起人不能参与自己的审核');
+  }
+
+  db.prepare(`
+    INSERT INTO review_votes(task_id, admin_id, admin_name, decision, comment, created_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(task_id, admin_id) DO UPDATE SET
+      decision=excluded.decision,
+      comment=excluded.comment,
+      created_at=CURRENT_TIMESTAMP
+  `).run(task.id, opts.adminId, opts.adminName, opts.decision, opts.comment || null);
+
+  const c = db.prepare(`
+    SELECT
+      SUM(CASE WHEN decision='approve' THEN 1 ELSE 0 END) AS approve_count,
+      SUM(CASE WHEN decision='reject' THEN 1 ELSE 0 END) AS reject_count
+    FROM review_votes
+    WHERE task_id=?
+  `).get(task.id) as any;
+
+  const approveCount = Number(c?.approve_count || 0);
+  const rejectCount = Number(c?.reject_count || 0);
+  const required = getRequiredApprovals(opts.moduleKey);
+
+  let status: 'pending' | 'approved' | 'rejected' = 'pending';
+  if (approveCount >= required) status = 'approved';
+  else if (rejectCount >= required) status = 'rejected';
+
+  if (status !== 'pending') {
+    db.prepare(`UPDATE review_tasks SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(status, task.id);
+  }
+
+  return {
+    taskId: Number(task.id),
+    done: status !== 'pending',
+    status,
+    approveCount,
+    rejectCount,
+    required
+  };
+};
+
+
 
   
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true }));
 
+app.use('/api', createRpRouter(db));
+app.use('/api/custom-games', createCustomGameRouter(db as any));
+
+// 玩家登录（单账号单会话：新登录踢旧）
+app.post('/api/auth/login', async (req, res) => {
+  const { name, password } = req.body || {};
+  if (!name || !password) return res.status(400).json({ success: false, message: 'name/password 必填' });
+
+  const user = db.prepare(`SELECT id, name, loginPasswordHash FROM users WHERE name=?`).get(name) as any;
+  if (!user) return res.status(404).json({ success: false, message: '用户不存在' });
+
+  // 首次设置密码（可按你策略改成必须管理员审核后才能设）
+  if (!user.loginPasswordHash) {
+    const hash = await hashPassword(password);
+    db.prepare(`UPDATE users SET loginPasswordHash=? WHERE id=?`).run(hash, user.id);
+  } else {
+    const ok = await verifyPassword(password, user.loginPasswordHash);
+    if (!ok) return res.status(401).json({ success: false, message: '密码错误' });
+  }
+
+  // 踢旧会话
+  db.prepare(`UPDATE user_sessions SET revokedAt=CURRENT_TIMESTAMP WHERE userId=? AND role='player' AND revokedAt IS NULL`).run(user.id);
+  db.prepare(`UPDATE users SET forceOfflineAt=? WHERE id=?`).run(nowIso(), user.id);
+
+  const token = issueToken();
+  db.prepare(`
+    INSERT INTO user_sessions (token, userId, userName, role)
+    VALUES (?, ?, ?, 'player')
+  `).run(token, user.id, user.name);
+
+  res.json({ success: true, token, userId: user.id, name: user.name });
+});
+
+// 管理员双重验证登录（代码 + 名字白名单）
+app.post('/api/admin/auth/login', (req, res) => {
+  const { entryCode, adminName } = req.body || {};
+  if (!entryCode || !adminName) return res.status(400).json({ success: false, message: 'entryCode/adminName 必填' });
+
+  const normalCode = process.env.ADMIN_ENTRY_CODE || '';
+  const superName = process.env.SUPER_ADMIN_NAME || '';
+  const superCode = process.env.SUPER_ADMIN_CODE || '';
+
+  let pass = false;
+  let isSuper = false;
+
+  // 普通管理员：代码正确 + 白名单命中
+  if (entryCode === normalCode) {
+    const wl = db.prepare(`SELECT * FROM admin_whitelist WHERE name=? AND enabled=1`).get(adminName) as any;
+    if (wl) pass = true;
+  }
+
+  // 紧急超级管理员（安全替代，不是名字单因子后门）
+  if (!pass && adminName === superName && entryCode === superCode) {
+    pass = true;
+    isSuper = true;
+  }
+
+  if (!pass) return res.status(403).json({ success: false, message: '管理员验证失败' });
+
+  // 绑定到 users（没有则创建一个管理账号壳）
+  let u = db.prepare(`SELECT id, name FROM users WHERE name=?`).get(adminName) as any;
+  if (!u) {
+    const ret = db.prepare(`INSERT INTO users (name, status, role) VALUES (?, 'approved', '管理员')`).run(adminName);
+    u = { id: Number(ret.lastInsertRowid), name: adminName };
+  }
+
+  db.prepare(`UPDATE user_sessions SET revokedAt=CURRENT_TIMESTAMP WHERE userId=? AND role='admin' AND revokedAt IS NULL`).run(u.id);
+
+  const token = issueToken();
+  db.prepare(`INSERT INTO user_sessions (token, userId, userName, role) VALUES (?, ?, ?, 'admin')`).run(token, u.id, u.name);
+
+  res.json({ success: true, token, adminName: u.name, isSuper });
+});
+
+// 在线管理员
+app.get('/api/admin/online', requireAdminAuth, (_req, res) => {
+  const rows = db.prepare(`
+    SELECT s.userId, s.userName, s.lastSeenAt, u.adminAvatarUrl
+    FROM user_sessions s
+    LEFT JOIN users u ON u.id = s.userId
+    WHERE s.role='admin' AND s.revokedAt IS NULL
+    ORDER BY s.lastSeenAt DESC
+  `).all();
+  res.json({ success: true, admins: rows });
+});
+
+
+
+// 管理员设置头像
+app.put('/api/admin/profile/avatar', requireAdminAuth, (req: any, res) => {
+  const { avatarUrl } = req.body || {};
+  db.prepare(`UPDATE users SET adminAvatarUrl=? WHERE id=?`).run(avatarUrl || null, req.admin.userId);
+  writeAdminLog(req.admin.name, '更新了管理员头像', 'admin', String(req.admin.userId), { avatarUrl });
+  res.json({ success: true });
+});
+
+// 管理员白名单管理（仅已登录管理员可维护；你也可改成仅super）
+app.get('/api/admin/whitelist', requireAdminAuth, (_req, res) => {
+  const rows = db.prepare(`SELECT * FROM admin_whitelist ORDER BY id DESC`).all();
+  res.json({ success: true, rows });
+});
+
+app.post('/api/admin/whitelist', requireAdminAuth, (req: any, res) => {
+  const { name, codeName } = req.body || {};
+  if (!name) return res.status(400).json({ success: false, message: 'name 必填' });
+  db.prepare(`INSERT OR IGNORE INTO admin_whitelist (name, code_name, enabled) VALUES (?, ?, 1)`).run(name, codeName || null);
+  writeAdminLog(req.admin.name, `添加管理员白名单 ${name}`, 'admin_whitelist', name);
+  res.json({ success: true });
+});
+app.delete('/api/admin/whitelist/:name', requireAdminAuth, (req: any, res) => {
+  const name = decodeURIComponent(req.params.name || '');
+  if (!name) return res.status(400).json({ success: false, message: 'name 必填' });
+  if (name === '塔') return res.status(400).json({ success: false, message: '固定管理员不可删除' });
+
+  db.prepare(`DELETE FROM admin_whitelist WHERE name = ?`).run(name);
+  writeAdminLog(req.admin.name, `删除管理员白名单 ${name}`, 'admin_whitelist', name);
+  res.json({ success: true, message: `管理员 ${req.admin.name} 编辑了管理员名单：删除 ${name}` });
+});
+
+app.get('/api/admin/action-logs', requireAdminAuth, (_req, res) => {
+  const logs = db.prepare(`SELECT * FROM admin_action_logs ORDER BY id DESC LIMIT 300`).all();
+  res.json({ success: true, logs });
+});
+ app.get('/api/admin/review-rules', requireAdminAuth, (_req, res) => {
+  const rules = db.prepare(`
+    SELECT module_key, required_approvals, updated_at
+    FROM review_rules
+    ORDER BY module_key ASC
+  `).all();
+  res.json({ success: true, rules });
+});
+
+app.put('/api/admin/review-rules/:moduleKey', requireAdminAuth, (req: any, res) => {
+  const moduleKey = String(req.params.moduleKey || '');
+  const requiredApprovals = Math.max(1, Number(req.body?.requiredApprovals || 1));
+
+  setRequiredApprovals(moduleKey, requiredApprovals);
+  writeAdminLog(req.admin.name, `设置审核门槛 ${moduleKey}=${requiredApprovals}`, 'review_rules', moduleKey, { requiredApprovals });
+
+  res.json({ success: true, moduleKey, requiredApprovals });
+});
+
+app.post('/api/admin/announcements', requireAdminAuth, (req: any, res) => {
+  const { type, title, content } = req.body || {};
+  if (!title || !content) return res.status(400).json({ success: false, message: 'title/content 必填' });
+
+  const extra = JSON.stringify({ by: req.admin.name });
+  db.prepare(`
+    INSERT INTO announcements(type, title, content, extraJson, payload, createdAt, created_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(type || 'system', title, content, extra, extra);
+
+  writeAdminLog(req.admin.name, `发布公告 ${title}`, 'announcement', title);
+  res.json({ success: true, message: `管理员 ${req.admin.name} 编辑了公告 ${title}` });
+});
 
   // ================= 4. 管理员专属 API =================
-  app.post('/api/admin/items', (req, res) => {
-    const { name, description, locationTag, npcId, price, faction, tier, itemType, effectValue } = req.body;
-    db.prepare(`
-      INSERT INTO global_items (name, description, locationTag, npcId, price, faction, tier, itemType, effectValue) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, description, locationTag, npcId || null, price, faction || '通用', tier || '低阶', itemType || '回复道具', effectValue || 0);
-    res.json({ success: true });
-  });
+  app.post('/api/admin/items', requireAdminAuth, (req: any, res) => {
+  const { name, description, locationTag, npcId, price, faction, tier, itemType, effectValue } = req.body;
+  const ret = db.prepare(`
+    INSERT INTO global_items (name, description, locationTag, npcId, price, faction, tier, itemType, effectValue) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, description, locationTag, npcId || null, price, faction || '通用', tier || '低阶', itemType || '回复道具', effectValue || 0);
 
-  app.post('/api/admin/skills', (req, res) => {
-    const { name, faction, tier, description, npcId } = req.body;
-    db.prepare('INSERT INTO global_skills (name, faction, tier, description, npcId) VALUES (?, ?, ?, ?, ?)')
-      .run(name, faction, tier || '低阶', description, npcId || null);
-    res.json({ success: true });
-  });
+  writeAdminLog(req.admin.name, `新增物品 ${name}`, 'global_items', String(ret.lastInsertRowid), { name });
+  res.json({ success: true, message: `管理员 ${req.admin.name} 编辑了物品 ${name}` });
+});
+
+
+ app.post('/api/admin/skills', requireAdminAuth, (req: any, res) => {
+  const { name, faction, tier, description, npcId } = req.body;
+  const ret = db.prepare(
+    'INSERT INTO global_skills (name, faction, tier, description, npcId) VALUES (?, ?, ?, ?, ?)'
+  ).run(name, faction, tier || '低阶', description, npcId || null);
+
+  writeAdminLog(req.admin.name, `新增技能 ${name}`, 'global_skills', String(ret.lastInsertRowid), { name });
+  res.json({ success: true, message: `管理员 ${req.admin.name} 编辑了技能 ${name}` });
+});
+
+app.post('/api/explore/wild-encounter', (req, res) => {
+  const { userId, locationId } = req.body || {};
+  const u = db.prepare(`SELECT id, name, hp, maxHp, mp, maxMp, gold FROM users WHERE id=?`).get(userId) as any;
+  if (!u) return res.status(404).json({ success: false, message: '用户不存在' });
+
+  const roll = Math.random();
+  if (roll > 0.45) {
+    const gain = 30 + Math.floor(Math.random() * 70);
+    db.prepare(`UPDATE users SET gold = gold + ? WHERE id = ?`).run(gain, userId);
+    logWorldActivity(Number(userId), String(locationId || 'wild'), 'wild_encounter', `野外遭遇获胜，获得${gain}G`);
+    return res.json({ success: true, win: true, message: `你击退了怪物，获得 ${gain}G` });
+  } else {
+    const hurt = Math.max(5, Math.floor(u.maxHp * 0.12));
+    const newHp = Math.max(1, Number(u.hp) - hurt);
+    db.prepare(`UPDATE users SET hp=? WHERE id=?`).run(newHp, userId);
+    logWorldActivity(Number(userId), String(locationId || 'wild'), 'wild_encounter', `野外遭遇受伤，损失${hurt}HP`);
+    return res.json({ success: true, win: false, message: `遭遇失败，损失 ${hurt} HP` });
+  }
+});
+
+
 
   // ================= 5. 游戏前端核心 API =================
 
@@ -589,6 +1257,9 @@ async function startServer() {
         } else {
             db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(userId, bookName);
         }
+        logWorldActivity(Number(userId), String(locationId), 'explore_skill', `获得技能书 ${bookName}`);
+        logWorldActivity(Number(userId), String(locationId), 'explore_item', `发现了 ${randomItem.name}`);
+
         res.json({ success: true, message: `你探索到了一本【${bookName}】！由于派系不符无法直接学习，已放入背包（可交易/出售）。`, type: 'book' });
     }
   });
@@ -740,6 +1411,64 @@ async function startServer() {
       res.status(500).json({ success: false, message: error.message });
     }
   });
+  app.get('/api/world/presence', (req, res) => {
+  const locationId = String(req.query.locationId || '').trim();
+
+  try {
+    let players: any[] = [];
+    if (locationId) {
+      players = db.prepare(`
+        SELECT id as userId, name as userName, avatarUrl, currentLocation
+        FROM users
+        WHERE status IN ('approved', 'ghost') AND currentLocation = ?
+        ORDER BY id DESC
+        LIMIT 200
+      `).all(locationId);
+    } else {
+      players = db.prepare(`
+        SELECT id as userId, name as userName, avatarUrl, currentLocation
+        FROM users
+        WHERE status IN ('approved', 'ghost')
+        ORDER BY id DESC
+        LIMIT 500
+      `).all();
+    }
+
+    res.json({ success: true, players });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/world/activity/recent', (req, res) => {
+  const locationId = String(req.query.locationId || '').trim();
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit || 30)));
+
+  try {
+    let logs: any[] = [];
+    if (locationId) {
+      logs = db.prepare(`
+        SELECT id, userId, userName, avatarUrl, locationId, actionType, actionText, createdAt
+        FROM world_activity_logs
+        WHERE locationId = ?
+        ORDER BY id DESC
+        LIMIT ?
+      `).all(locationId, limit);
+    } else {
+      logs = db.prepare(`
+        SELECT id, userId, userName, avatarUrl, locationId, actionType, actionText, createdAt
+        FROM world_activity_logs
+        ORDER BY id DESC
+        LIMIT ?
+      `).all(limit);
+    }
+
+    res.json({ success: true, logs });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 
   app.post('/api/rescue/request', (req, res) => {
     const { patientId, healerId } = req.body;
@@ -781,7 +1510,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.get('/api/admin/users', (_req, res) => {
+  app.get('/api/admin/users',requireAdminAuth, (_req, res) => {
     try {
       const users = db.prepare('SELECT * FROM users ORDER BY id DESC').all();
       res.json({ success: true, users });
@@ -790,28 +1519,100 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/users/:id/status', (req, res) => {
-    const { status } = req.body;
-    const userId = req.params.id;
-    
-    if (status === 'dead') {
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-      if (user) {
-        const exist = db.prepare('SELECT id FROM tombstones WHERE name = ?').get(user.name);
+  app.post('/api/admin/users/:id/status', requireAdminAuth, (req: any, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const desired = String(req.body?.status || ''); // approved/rejected/dead...
+    const comment = String(req.body?.comment || '');
+
+    if (!Number.isFinite(userId)) return res.status(400).json({ success: false, message: '无效用户ID' });
+
+    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+    if (!target) return res.status(404).json({ success: false, message: '用户不存在' });
+
+    if (Number(req.admin.userId) === userId) {
+      return res.status(403).json({ success: false, message: '不能审核自己的角色' });
+    }
+
+    let moduleKey = '';
+    if (target.status === 'pending') moduleKey = 'user_join';
+    else if (target.status === 'pending_death') moduleKey = 'user_death';
+    else if (target.status === 'pending_ghost') moduleKey = 'user_ghost';
+    else return res.status(400).json({ success: false, message: '当前状态不是可会签审核状态' });
+
+    const decision: ReviewDecision = (desired === 'approved' || desired === 'dead') ? 'approve' : 'reject';
+
+    const result = castVoteAndJudge({
+      moduleKey,
+      targetType: 'user',
+      targetId: userId,
+      creatorUserId: userId,
+      payload: { desired, fromStatus: target.status },
+      adminId: req.admin.userId,
+      adminName: req.admin.name,
+      decision,
+      comment
+    });
+
+    if (!result.done) {
+      return res.json({
+        success: true,
+        pending: true,
+        message: `已记录你的审核票：${result.approveCount}/${result.required} 通过，${result.rejectCount}/${result.required} 驳回`,
+        ...result
+      });
+    }
+
+    // 达到门槛后，执行最终状态
+    if (moduleKey === 'user_join') {
+      const finalStatus = result.status === 'approved' ? 'approved' : 'rejected';
+      db.prepare('UPDATE users SET status = ? WHERE id = ?').run(finalStatus, userId);
+    } else if (moduleKey === 'user_death') {
+      if (result.status === 'approved') {
+        db.prepare('UPDATE users SET status = ? WHERE id = ?').run('dead', userId);
+
+        const exist = db.prepare('SELECT id FROM tombstones WHERE name = ?').get(target.name) as any;
         if (!exist) {
           db.prepare(`
-            INSERT INTO tombstones (name, deathDescription, role, mentalRank, physicalRank, ability, spiritName) 
+            INSERT INTO tombstones (name, deathDescription, role, mentalRank, physicalRank, ability, spiritName)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(user.name, user.deathDescription || '无名之殇', user.role, user.mentalRank, user.physicalRank, user.ability, user.spiritName);
+          `).run(
+            target.name,
+            target.deathDescription || '无名之殇',
+            target.role,
+            target.mentalRank,
+            target.physicalRank,
+            target.ability,
+            target.spiritName
+          );
         }
+      } else {
+        db.prepare('UPDATE users SET status = ? WHERE id = ?').run('approved', userId);
+      }
+    } else if (moduleKey === 'user_ghost') {
+      if (result.status === 'approved') {
+        db.prepare(`UPDATE users SET status='approved', role='鬼魂', physicalRank='无' WHERE id=?`).run(userId);
+      } else {
+        db.prepare(`UPDATE users SET status='approved' WHERE id=?`).run(userId);
       }
     }
-    
-    db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, userId);
-    res.json({ success: true });
-  });
 
-  app.delete('/api/admin/users/:id', (req, res) => {
+    writeAdminLog(req.admin.name, `会签完成 ${moduleKey} -> ${result.status}`, 'user', String(userId), result);
+
+    return res.json({
+      success: true,
+      pending: false,
+      finalStatus: result.status,
+      ...result
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message || '审核失败' });
+  }
+});
+
+  
+
+  app.delete('/api/admin/users/:id', requireAdminAuth,(req, res) => {
     const userId = Number(req.params.id);
     if (!Number.isFinite(userId)) return res.status(400).json({ success: false, message: '无效用户ID' });
 
@@ -835,7 +1636,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/admin/users/:id', (req, res) => {
+  app.put('/api/admin/users/:id', requireAdminAuth,(req, res) => {
     let { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
     
     if (age && age < 16) {
@@ -855,17 +1656,32 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.put('/api/users/:id/settings', (req, res) => {
-    const { roomBgImage, roomDescription, allowVisit, password } = req.body;
-    db.prepare(`
-       UPDATE users SET roomBgImage=?, roomDescription=?, allowVisit=?, password=? WHERE id=?
-    `).run(
-      roomBgImage || null, roomDescription || null, allowVisit ? 1 : 0, password || null, req.params.id
-    );
-    res.json({ success: true });
-  });
+  app.put('/api/users/:id/settings', requireUserAuth, async (req: any, res) => {
+  const { roomBgImage, roomDescription, allowVisit, roomPassword } = req.body;
+  if (Number(req.params.id) !== req.user.id) return res.status(403).json({ success: false, message: '无权限' });
 
-  app.get('/api/admin/roleplay_logs', (_req, res) => {
+  const roomHash = roomPassword ? await hashPassword(roomPassword) : null;
+  db.prepare(`
+     UPDATE users SET roomBgImage=?, roomDescription=?, allowVisit=?, roomPasswordHash=? WHERE id=?
+  `).run(
+    roomBgImage || null, roomDescription || null, allowVisit ? 1 : 0, roomHash, req.params.id
+  );
+  res.json({ success: true });
+});
+
+// 访客进入房间前验证
+app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
+  const { password } = req.body || {};
+  const owner = db.prepare(`SELECT roomPasswordHash FROM users WHERE id=?`).get(req.params.ownerId) as any;
+  if (!owner) return res.status(404).json({ success: false, message: '房主不存在' });
+  if (!owner.roomPasswordHash) return res.json({ success: true, pass: true }); // 没设密码
+
+  const ok = await verifyPassword(password || '', owner.roomPasswordHash);
+  res.json({ success: true, pass: ok });
+});
+
+
+  app.get('/api/admin/roleplay_logs',requireAdminAuth, (_req, res) => {
     const logs = db.prepare('SELECT * FROM roleplay_messages ORDER BY locationId ASC, createdAt DESC').all();
     res.json({ success: true, logs });
   });
@@ -874,7 +1690,7 @@ async function startServer() {
     res.json({ success: true, items: db.prepare('SELECT * FROM global_items').all() });
   });
 
-  app.delete('/api/admin/items/:id', (req, res) => {
+  app.delete('/api/admin/items/:id', requireAdminAuth,(req, res) => {
     db.prepare('DELETE FROM global_items WHERE id = ?').run(req.params.id);
     res.json({ success: true });
   });
@@ -883,7 +1699,7 @@ async function startServer() {
     res.json({ success: true, skills: db.prepare('SELECT * FROM global_skills').all() });
   });
 
-  app.delete('/api/admin/skills/:id', (req, res) => {
+  app.delete('/api/admin/skills/:id',requireAdminAuth,  (req, res) => {
     db.prepare('DELETE FROM global_skills WHERE id = ?').run(req.params.id);
     res.json({ success: true });
   });
@@ -1093,6 +1909,7 @@ async function startServer() {
 
     res.json({ success: true, levelUp: levelGain > 0 });
   });
+  
 
   app.post('/api/tower/join', (req, res) => {
     const { userId, jobName } = req.body;
@@ -1304,11 +2121,27 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+  app.use((req, res) => {
+  res.status(404).json({ message: "Not Found" });
+});
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ message: "Internal Server Error" });
+});
+
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
+    console.log('[boot] rp router mounted: /api');
+console.log('[boot] custom game router mounted: /api/custom-games');
+console.log('[boot] review rules api: /api/admin/review-rules');
+
   });
+ 
 }
+
+
 
 // 【修复3】捕捉并处理异步入口错误，避免隐式崩溃
 startServer().catch(err => {

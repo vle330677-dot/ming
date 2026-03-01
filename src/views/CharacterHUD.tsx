@@ -129,73 +129,39 @@ export function CharacterHUD({ user, onLogout, onRefresh }: Props) {
 
   // ✅ 头像保存：多端点 + 多字段 + 本地缓存兜底
   const handleSaveAvatar = async () => {
-    try {
-      if (!avatarDraft?.trim()) {
-        alert('请先输入头像URL或上传图片');
-        return;
-      }
-
-      setSavingAvatar(true);
-
-      const endpoints = [
-        `/api/users/${user.id}/settings`,
-        `/api/users/${user.id}`,
-        `/api/users/${user.id}/profile`
-      ];
-
-      const payloads = [
-        { avatarUrl: avatarDraft },
-        { avatar_url: avatarDraft },
-        { settings: { avatarUrl: avatarDraft } }
-      ];
-
-      let saved = false;
-      let failMsg = '';
-
-      for (const ep of endpoints) {
-        for (const body of payloads) {
-          try {
-            const res = await fetch(ep, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            });
-
-            const data = await res.json().catch(() => ({ success: res.ok }));
-
-            if (res.ok && data?.success !== false) {
-              saved = true;
-              break;
-            } else {
-              failMsg = data?.message || failMsg;
-            }
-          } catch {
-            // 尝试下一组
-          }
-        }
-        if (saved) break;
-      }
-
-      if (!saved) {
-        alert(failMsg || '头像保存失败：后端接口未匹配');
-        return;
-      }
-
-      // 前端立刻生效 + 本地缓存兜底
-      setLocalAvatarUrl(avatarDraft);
-      localStorage.setItem(avatarCacheKey, avatarDraft);
-
-      // 刷新上层用户数据（若后端已成功写库，这里能拿到最新 user.avatarUrl）
-      onRefresh?.();
-
-      alert('头像保存成功');
-    } catch (e) {
-      console.error(e);
-      alert('头像保存失败（网络错误）');
-    } finally {
-      setSavingAvatar(false);
+  try {
+    if (!avatarDraft?.trim()) {
+      alert('请先输入头像URL或上传图片');
+      return;
     }
-  };
+
+    setSavingAvatar(true);
+
+    const res = await fetch(`/api/users/${user.id}/avatar`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ avatarUrl: avatarDraft })
+    });
+
+    const data = await res.json().catch(() => ({} as any));
+    if (!res.ok || data?.success === false) {
+      alert(data?.message || '头像保存失败');
+      return;
+    }
+
+    setLocalAvatarUrl(avatarDraft);
+    localStorage.setItem(avatarCacheKey, avatarDraft);
+    onRefresh?.();
+
+    alert('头像保存成功');
+  } catch (e) {
+    console.error(e);
+    alert('头像保存失败（网络错误）');
+  } finally {
+    setSavingAvatar(false);
+  }
+};
+
 
   const furyColor = (user.fury || 0) > 80 ? 'bg-red-600 animate-pulse' : 'bg-purple-600';
   const userAge = user.age || 0;

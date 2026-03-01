@@ -14,6 +14,7 @@ interface RPMessage {
   sessionId: string;
   senderId: number | null;
   senderName: string;
+  senderAvatar?: string | null; // 头像字段
   content: string;
   type: 'user' | 'system' | 'text';
   createdAt: string;
@@ -35,7 +36,7 @@ interface RPSession {
 const POS_KEY = 'rp_window_pos_v1';
 const MIN_KEY = 'rp_window_min_v1';
 
-// 你可以自己调这两个尺寸
+// 可调尺寸
 const EXPANDED_W = 420;
 const EXPANDED_H = 460;
 const MINI_W = 320;
@@ -73,7 +74,7 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
   const [unread, setUnread] = useState(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  // 拖拽相关
+  // 拖拽位置
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
     if (typeof window === 'undefined') return { x: 12, y: 12 };
     try {
@@ -88,7 +89,6 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
 
   const draggingRef = useRef(false);
   const dragOffsetRef = useRef({ dx: 0, dy: 0 });
-
   const prevMessagesRef = useRef<RPMessage[]>([]);
 
   const title = useMemo(() => {
@@ -111,6 +111,7 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
   const fetchSessionData = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
+
       const res = await fetch(`/api/rp/session/${encodeURIComponent(sessionId)}/messages`);
       const data = await res.json();
 
@@ -164,6 +165,7 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
     try {
       localStorage.setItem(MIN_KEY, minimized ? '1' : '0');
     } catch {}
+
     // 尺寸变化后自动修正位置
     setPos((p) => fixPosToViewport(p, minimized ? MINI_W : EXPANDED_W, minimized ? MINI_H : EXPANDED_H));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,8 +231,13 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
       const res = await fetch(`/api/rp/session/${encodeURIComponent(sessionId)}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ senderId: currentUser.id, senderName: currentUser.name, content })
+        body: JSON.stringify({
+          senderId: currentUser.id,
+          senderName: currentUser.name,
+          content
+        })
       });
+
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || data.success === false) {
@@ -257,6 +264,7 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name })
       });
+
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || data.success === false) {
@@ -358,23 +366,38 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
                     );
                   }
 
+                  const avatar = mine ? currentUser.avatarUrl : m.senderAvatar;
+
                   return (
                     <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        className={`max-w-[82%] rounded-lg p-2 border ${
-                          mine
-                            ? 'bg-sky-600/20 border-sky-500/30 text-sky-100'
-                            : 'bg-slate-800 border-slate-700 text-slate-100'
-                        }`}
-                      >
-                        <div className="text-[10px] opacity-70 mb-1">
-                          {m.senderName} · {new Date(m.createdAt).toLocaleTimeString()}
+                      <div className={`flex items-end gap-2 ${mine ? 'flex-row-reverse' : ''} max-w-[90%]`}>
+                        <div className="w-7 h-7 rounded-full overflow-hidden border border-slate-600 shrink-0">
+                          {avatar ? (
+                            <img src={avatar} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-[10px] bg-slate-700 text-white font-black">
+                              {(m.senderName || '?')[0]}
+                            </div>
+                          )}
                         </div>
-                        <div className="text-xs whitespace-pre-wrap break-words">{m.content}</div>
+
+                        <div
+                          className={`rounded-lg p-2 border ${
+                            mine
+                              ? 'bg-sky-600/20 border-sky-500/30 text-sky-100'
+                              : 'bg-slate-800 border-slate-700 text-slate-100'
+                          }`}
+                        >
+                          <div className="text-[10px] opacity-70 mb-1">
+                            {m.senderName} · {new Date(m.createdAt).toLocaleTimeString()}
+                          </div>
+                          <div className="text-xs whitespace-pre-wrap break-words">{m.content}</div>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
+
                 <div ref={bottomRef} />
               </>
             )}
