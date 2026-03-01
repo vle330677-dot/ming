@@ -21,7 +21,8 @@ import { ObserverView } from './ObserverView';
 
 // ===== 新增：自定义游戏 =====
 import { CustomGamePlayerView } from './CustomGamePlayerView';
-import { CustomGameRunView } from './CustomGameRunView';
+import CustomGameRunView from './CustomGameRunView';
+
 import { GlobalAnnouncementPrompt } from './GlobalAnnouncementPrompt';
 
 // ================== 资源映射配置 ==================
