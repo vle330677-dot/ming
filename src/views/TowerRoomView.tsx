@@ -21,12 +21,6 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
-// ====== 你项目里请替换成真实 API ======
-import {
-  getTowerRoomList, // (towerId: string) => Promise<TowerRoom[]>
-  removeTowerRoom,  // (roomId: string) => Promise<void>
-} from '@/services/towerRoomService';
-
 const { Text } = Typography;
 const { confirm } = Modal;
 
@@ -62,6 +56,98 @@ const STATUS_META: Record<RoomStatus, { text: string; color: string }> = {
 };
 
 const PAGE_SIZE_OPTIONS = ['10', '20', '50', '100'];
+
+/**
+ * ===== 内置服务层（替代缺失的 @/services/towerRoomService）=====
+ * 支持两套路由，避免后端路径差异导致前端直接挂死：
+ * 1) GET    /api/tower/rooms?towerId=xxx
+ * 2) GET    /api/tower/:towerId/rooms
+ * 删除：
+ * 1) DELETE /api/tower/rooms/:roomId
+ * 2) DELETE /api/tower/room/:roomId
+ */
+
+function normalizeRoomsPayload(payload: any): TowerRoom[] {
+  const raw = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.rooms)
+    ? payload.rooms
+    : Array.isArray(payload?.data)
+    ? payload.data
+    : [];
+
+  return raw.map((r: any) => ({
+    id: String(r.id),
+    code: String(r.code ?? r.roomCode ?? ''),
+    name: r.name ?? r.roomName ?? undefined,
+    floor: Number(r.floor ?? 0),
+    area: r.area != null ? Number(r.area) : undefined,
+    roomType: r.roomType ?? r.type ?? undefined,
+    status: (r.status ?? 'vacant') as RoomStatus,
+    tenantName: r.tenantName ?? r.tenant ?? undefined,
+    updatedAt: r.updatedAt ?? r.updated_at ?? undefined,
+  }));
+}
+
+async function getTowerRoomList(towerId: string): Promise<TowerRoom[]> {
+  const candidates = [
+    `/api/tower/rooms?towerId=${encodeURIComponent(towerId)}`,
+    `/api/tower/${encodeURIComponent(towerId)}/rooms`,
+  ];
+
+  let lastError = '房间列表接口不可用';
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 404) {
+        lastError = data?.message || `接口不存在: ${url}`;
+        continue;
+      }
+
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || `请求失败: ${url}`);
+      }
+
+      return normalizeRoomsPayload(data);
+    } catch (e: any) {
+      lastError = e?.message || String(e);
+    }
+  }
+
+  throw new Error(lastError);
+}
+
+async function removeTowerRoom(roomId: string): Promise<void> {
+  const candidates = [
+    `/api/tower/rooms/${encodeURIComponent(roomId)}`,
+    `/api/tower/room/${encodeURIComponent(roomId)}`,
+  ];
+
+  let lastError = '删除接口不可用';
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 404) {
+        lastError = data?.message || `接口不存在: ${url}`;
+        continue;
+      }
+
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || `删除失败: ${url}`);
+      }
+
+      return;
+    } catch (e: any) {
+      lastError = e?.message || String(e);
+    }
+  }
+
+  throw new Error(lastError);
+}
 
 const TowerRoomView: React.FC<TowerRoomViewProps> = ({
   towerId,
