@@ -456,44 +456,61 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     loadComments(tombstoneId);
   };
 
-  // ===== 气泡布局：防重叠 + 分层 =====
+  // ================= 🚀 核心修复：更精准、不乱飘的气泡定位算法 =================
   const bubbleLayout = useMemo(() => {
     const result: Record<string, { left: number; top: number; scale: number; depth: number; delay: number; z: number }> = {};
     const placed: Array<{ x: number; y: number }> = [];
 
+    // 寻找当前地点的物理坐标信息
+    const loc = LOCATIONS.find((l) => l.id === effectiveLocationId);
+    const isWorldMap = !activeView; // 如果没有 activeView，说明在大地图视角
+    
+    // 定位基准点：如果在大地图，基准点直接绑定该地标坐标（稍微往上移一点点免得挡住文字）；
+    // 如果在进入了室内区域，基准点在屏幕中心（50, 50）
+    const baseX = isWorldMap && loc ? loc.x : 50;
+    const baseY = isWorldMap && loc ? loc.y - 4 : 50;
+    
+    // 头像散布的范围限制：大地图聚集在坐标点周围，室内可以稍微散开
+    const spread = isWorldMap ? 6 : 30;
+
     localPlayers.forEach((p: any, idx: number) => {
       const h = hashNum(`${p.id}-${idx}`);
 
-      let x = 12 + (h % 76);
-      let y = 18 + ((h * 7) % 58);
+      let angle = (h % 360) * (Math.PI / 180);
+      let r = isWorldMap ? (h % spread) : (h % spread) + 5;
 
+      let x = baseX + Math.cos(angle) * r;
+      let y = baseY + Math.sin(angle) * r * 0.8; // 视觉上 Y 轴呈扁平椭圆
+
+      // 防重叠计算
       let found = false;
-      for (let t = 0; t < 36; t++) {
+      for (let t = 0; t < 50; t++) {
         const ok = placed.every((pt) => {
           const dx = x - pt.x;
           const dy = y - pt.y;
-          return dx * dx + dy * dy >= 65;
+          // 大地图重叠容忍度高（靠得紧密），室内容忍度低（散开）
+          return dx * dx + dy * dy >= (isWorldMap ? 9 : 45);
         });
         if (ok) {
           found = true;
           break;
         }
-
-        const angle = (t * 37) * (Math.PI / 180);
-        const r = 1.6 + t * 0.45;
-        x = Math.min(90, Math.max(10, x + Math.cos(angle) * r));
-        y = Math.min(80, Math.max(14, y + Math.sin(angle) * r));
+        r += isWorldMap ? 0.8 : 2;
+        angle += 0.5;
+        x = baseX + Math.cos(angle) * r;
+        y = baseY + Math.sin(angle) * r * 0.8;
       }
 
-      if (!found) {
-        x = 12 + ((h + idx * 13) % 76);
-        y = 18 + (((h + idx * 29) * 3) % 58);
-      }
+      // 边缘安全限制，防止挤出屏幕边界
+      x = Math.max(5, Math.min(95, x));
+      y = Math.max(5, Math.min(95, y));
 
       placed.push({ x, y });
 
-      const depth = y / 100;
-      const scale = 0.84 + depth * 0.42;
+      // 大地图视角下头像等比例缩小
+      const baseScale = isWorldMap ? 0.55 : 0.9;
+      const scale = baseScale + (h % 10) * 0.01;
+      const depth = (y - baseY) / 100;
       const z = Math.floor(20 + depth * 40);
       const delay = (h % 9) * 0.12;
 
@@ -501,7 +518,7 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     });
 
     return result;
-  }, [localPlayers]);
+  }, [localPlayers, effectiveLocationId, activeView]);
 
   const renderActiveView = () => {
     if (!activeView) return null;
@@ -609,8 +626,8 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* ================= 🚀 修复点 ================= */}
-      {/* 浮动头像气泡移动到了外面，无论是否有 activeView，都能在地图上正常显示！ */}
+      {/* ================= 🚀 修复点：移出 activeView 条件，独立存在 ================= */}
+      {/* 现在它只会安静地悬浮在玩家真正该在的地标上方，不再到处乱飘 */}
       <div className="absolute inset-0 z-30 pointer-events-none">
         {localPlayers.map((p, idx) => {
           const b = bubbleLayout[String(p.id)];
@@ -629,14 +646,13 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
               animate={{
                 opacity: 1,
                 scale: b.scale,
-                y: [0, -5, 0, 4, 0],
-                x: [0, 2, 0, -2, 0]
+                // 去掉之前漫天乱窜的 x/y 动画，只留下轻微的呼吸呼吸（上下 3px 浮动）
+                y: [0, -3, 0]
               }}
               transition={{
                 opacity: { duration: 0.35, delay: b.delay },
                 scale: { duration: 0.35, delay: b.delay },
-                y: { duration: 3.2 + (idx % 3) * 0.6, repeat: Infinity, ease: 'easeInOut' },
-                x: { duration: 4.0 + (idx % 4) * 0.5, repeat: Infinity, ease: 'easeInOut' }
+                y: { duration: 2.5 + (idx % 3) * 0.4, repeat: Infinity, ease: 'easeInOut' }
               }}
             >
               <button onClick={() => setInteractTarget(p)} className="group relative" title={`与 ${p.name} 互动`}>
@@ -673,7 +689,8 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           );
         })}
 
-        {localPlayers.length === 0 && (
+        {/* 仅在打开地点详情（进入 activeView）时，若无玩家才提示，世界地图不报此错 */}
+        {localPlayers.length === 0 && activeView && (
           <div
             className="absolute right-4 top-4 pointer-events-none px-3 py-1.5 rounded-lg text-[11px] font-bold
                           bg-slate-900/80 border border-slate-700 text-slate-400"
@@ -1139,7 +1156,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                 </button>
               </div>
 
-              {/* 兼容旧版 Props（as any 避免你还没改 CustomGamePlayerView 时 TS 报错） */}
               <CustomGamePlayerView
                 {...({
                   user,
