@@ -1006,17 +1006,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         </button>
       </div>
 
-      {/* 左下 自定义游戏入口（新增） */}
-      <div className="fixed bottom-6 left-44 z-[160]">
-        <button
-          onClick={() => setShowCustomGamePanel((v) => !v)}
-          className="relative px-4 py-3 rounded-2xl font-black text-xs shadow-xl transition-all bg-indigo-600 text-white hover:bg-indigo-500 flex items-center gap-2"
-        >
-          <Gamepad2 size={14} />
-          自定义游戏
-        </button>
-      </div>
-
       {/* 设置弹窗 */}
       <AnimatePresence>
         {showSettings && !showDeathForm && (
