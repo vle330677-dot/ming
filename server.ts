@@ -967,9 +967,9 @@ app.post('/api/admin/auth/login', (req, res) => {
   const { entryCode, adminName } = req.body || {};
   if (!entryCode || !adminName) return res.status(400).json({ success: false, message: 'entryCode/adminName 必填' });
 
-  const normalCode = process.env.ADMIN_ENTRY_CODE || '';
-  const superName = process.env.SUPER_ADMIN_NAME || '';
-  const superCode = process.env.SUPER_ADMIN_CODE || '';
+  const normalCode = process.env.ADMIN_ENTRY_CODE || '260225';
+  const superName = process.env.SUPER_ADMIN_NAME || '塔';
+  const superCode = process.env.SUPER_ADMIN_CODE || '260225';
 
   let pass = false;
   let isSuper = false;
