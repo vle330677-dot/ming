@@ -601,6 +601,30 @@ const ensureCompatColumns = () => {
 
 ensureCompatColumns();
 
+// 一次性迁移标记表
+db.exec(`
+  CREATE TABLE IF NOT EXISTS system_migrations (
+    key TEXT PRIMARY KEY,
+    appliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+const hasFix = db.prepare(`SELECT 1 FROM system_migrations WHERE key = ?`).get('fix_minor_home_v1');
+if (!hasFix) {
+  db.exec(`
+    UPDATE users
+    SET homeLocation = 'sanctuary'
+    WHERE age < 16
+      AND (homeLocation IS NULL OR homeLocation <> 'sanctuary');
+
+    UPDATE users
+    SET age = 15
+    WHERE role = '未分化' AND age >= 16;
+  `);
+
+  db.prepare(`INSERT INTO system_migrations(key) VALUES (?)`).run('fix_minor_home_v1');
+}
+
 
 
 // ================= 2. 初始数据种子 =================
@@ -1003,7 +1027,28 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/users', (req, res) => {
   let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
-  const finalAge = age || 18;
+  app.post('/api/users', (req, res) => {
+  let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body || {};
+
+  const isUndiff = role === '未分化' || Number(age) < 16;
+  const finalAge = normalizeCreateAge(age, isUndiff);
+  const finalGold = Number(gold || 0);
+
+  if (finalAge < 16) role = '未分化';
+  const homeLocation = finalAge < 16 ? 'sanctuary' : resolveInitialHome(finalAge, finalGold);
+
+  try {
+    db.prepare(`
+      UPDATE users
+      SET role=?, age=?, mentalRank=?, physicalRank=?, gold=?, ability=?, spiritName=?, spiritType=?, status='pending', homeLocation=?
+      WHERE name=?
+    `).run(role, finalAge, mentalRank, physicalRank, finalGold, ability, spiritName, spiritType, homeLocation, name);
+
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
   const finalGold = Number(gold || 0);
 
   if (finalAge < 16) role = '未分化';
@@ -1342,7 +1387,6 @@ app.post('/api/explore/wild-encounter', (req, res) => {
             db.prepare('INSERT INTO user_inventory (userId, name, qty) VALUES (?, ?, 1)').run(userId, bookName);
         }
         logWorldActivity(Number(userId), String(locationId), 'explore_skill', `获得技能书 ${bookName}`);
-        logWorldActivity(Number(userId), String(locationId), 'explore_item', `发现了 ${randomItem.name}`);
 
         res.json({ success: true, message: `你探索到了一本【${bookName}】！由于派系不符无法直接学习，已放入背包（可交易/出售）。`, type: 'book' });
     }
@@ -1962,8 +2006,6 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
   if (!roleRow || !['哨兵', '向导'].includes(String(roleRow.role || ''))) {
     return res.status(403).json({ success: false, message: '仅哨兵/向导可进行精神体交互' });
   }
-
-    const { userId, intimacyGain, imageUrl, name } = req.body;
 
     let status = db.prepare('SELECT * FROM spirit_status WHERE userId = ?').get(userId) as any;
     if (!status) {
