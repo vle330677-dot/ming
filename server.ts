@@ -1048,24 +1048,6 @@ app.post('/api/users', (req, res) => {
   }
 });
 
-  const finalGold = Number(gold || 0);
-
-  if (finalAge < 16) role = '未分化';
-
-  const homeLocation = resolveInitialHome(finalAge, finalGold);
-
-  try {
-    db.prepare(`
-      UPDATE users
-      SET role=?, age=?, mentalRank=?, physicalRank=?, gold=?, ability=?, spiritName=?, spiritType=?, status='pending', homeLocation=?
-      WHERE name=?
-    `).run(role, finalAge, mentalRank, physicalRank, finalGold, ability, spiritName, spiritType, homeLocation, name);
-
-    res.json({ success: true });
-  } catch (e: any) {
-    res.status(500).json({ success: false, message: e.message });
-  }
-});
 
 // 管理员双重验证登录（代码 + 名字白名单）
 app.post('/api/admin/auth/login', (req, res) => {
