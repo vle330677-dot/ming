@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import HomeRoomView, { deriveInitialHomeLocation } from './rooms/HomeRoomView';
+import HomeRoomView, { deriveInitialHomeLocation } from './HomeRoomView';
 
 import {
   ArrowLeft, X,
@@ -609,4 +609,5 @@ function RoleBtn({ title, sub, qualified, onClick }: any) {
       {!qualified && <span className="absolute top-4 right-4 text-[9px] font-bold text-rose-500 bg-rose-50 px-2 border border-rose-100 rounded">不符</span>}
     </button>
   );
+
 }
