@@ -5,7 +5,6 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRpRouter } from './server/rp.routes';
-import { createCustomGameRouter } from './server/routes/customGame.routes.ts';
 
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -908,7 +907,30 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/api', createRpRouter(db));
-app.use('/api/custom-games', createCustomGameRouter(db as any));
+// custom game 路由：可选加载，避免模块缺失导致服务崩溃
+try {
+  const mod = await import('./server/routes/customGame.routes.ts');
+  const createCustomGameRouter = mod.createCustomGameRouter;
+  if (typeof createCustomGameRouter === 'function') {
+    app.use('/api/custom-games', createCustomGameRouter(db as any));
+    console.log('[boot] custom game router mounted: /api/custom-games');
+  } else {
+    throw new Error('createCustomGameRouter is not a function');
+  }
+} catch (e) {
+  console.warn('[boot] custom game router missing, fallback enabled:', (e as Error).message);
+
+  const fallback = express.Router();
+  fallback.all('*', (_req, res) => {
+    res.status(503).json({
+      success: false,
+      message: 'custom game module unavailable'
+    });
+  });
+
+  app.use('/api/custom-games', fallback);
+}
+
 
 // 玩家登录（单账号单会话：新登录踢旧）
 app.post('/api/auth/login', async (req, res) => {
