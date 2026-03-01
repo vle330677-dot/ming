@@ -136,7 +136,8 @@ const btnGhost = `${btnBase} bg-slate-700 text-slate-100 hover:bg-slate-600`;
 const btnPrimary = `${btnBase} bg-sky-600 text-white hover:bg-sky-500`;
 const btnDanger = `${btnBase} bg-rose-700 text-rose-100 hover:bg-rose-600`;
 
-const TowerRoomView: React.FC<TowerRoomViewProps> = ({
+// ✅ 同时提供“具名导出 + 默认导出”
+export const TowerRoomView: React.FC<TowerRoomViewProps> = ({
   towerId,
   loading: outerLoading = false,
   onCreateRoom,
