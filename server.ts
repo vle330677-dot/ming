@@ -1174,6 +1174,40 @@ app.post('/api/admin/announcements', requireAdminAuth, (req: any, res) => {
   res.json({ success: true, message: `管理员 ${req.admin.name} 编辑了公告 ${title}` });
 });
 
+// 玩家端读取公告（轮询）
+
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, rows });
+});
+
+// 玩家端读取公告（轮询）
+app.get('/api/announcements', (req, res) => {
+  const sinceId = Math.max(0, Number(req.query.sinceId || 0));
+  const limit = Math.max(1, Math.min(30, Number(req.query.limit || 10)));
+
+  let rows: any[] = [];
+  if (sinceId > 0) {
+    rows = db.prepare(`
+      SELECT id, type, title, content, extraJson, createdAt, created_at
+      FROM announcements
+      WHERE id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `).all(sinceId, limit);
+  } else {
+    rows = db.prepare(`
+      SELECT id, type, title, content, extraJson, createdAt, created_at
+      FROM announcements
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(limit).reverse();
+  }
+
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, rows });
+});
+
+
   // ================= 4. 管理员专属 API =================
   app.post('/api/admin/items', requireAdminAuth, (req: any, res) => {
   const { name, description, locationTag, npcId, price, faction, tier, itemType, effectValue } = req.body;
