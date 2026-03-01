@@ -595,6 +595,8 @@ const ensureCompatColumns = () => {
   addColumn('custom_game_player_stats', 'total_currency', 'INTEGER DEFAULT 0');
   addColumn('custom_game_player_stats', 'games_played', 'INTEGER DEFAULT 0');
   addColumn('custom_game_player_stats', 'updated_at', 'DATETIME');
+  addColumn('users', 'homeLocation', 'TEXT'); // 家园所在地
+
 };
 
 ensureCompatColumns();
@@ -725,6 +727,33 @@ const logWorldActivity = (userId: number, locationId: string, actionType: string
   `).run(userId, u.name, u.avatarUrl || null, locationId, actionType, actionText);
 };
 
+
+const resolveInitialHome = (age: number, gold: number) => {
+  if (age < 16) return 'sanctuary';
+  return gold >= 9999 ? 'rich_area' : 'slums';
+};
+
+const JOB_HOME_MAP: Record<string, string> = {
+  // 东/西
+  '西区市长': 'slums', '西区副市长': 'slums', '西区技工': 'slums',
+  '东区市长': 'rich_area', '东区副市长': 'rich_area', '东区贵族': 'rich_area',
+
+  // 军队/学院/圣所/塔等
+  '军队将官': 'army', '军队校官': 'army', '军队尉官': 'army', '军队士兵': 'army',
+  '伦敦塔教师': 'london_tower', '伦敦塔职工': 'london_tower', '伦敦塔学员': 'london_tower',
+  '圣所保育员': 'sanctuary', '圣所职工': 'sanctuary', '圣所幼崽': 'sanctuary',
+  '圣子/圣女': 'tower_of_life', '侍奉者': 'tower_of_life', '候选者': 'tower_of_life', '仆从': 'tower_of_life',
+  '公会会长': 'guild', '公会成员': 'guild', '冒险者': 'guild',
+  '守塔会会长': 'tower_of_life', '守塔会成员': 'tower_of_life',
+  '恶魔会会长': 'demon_society', '恶魔会成员': 'demon_society',
+  '灵异所所长': 'paranormal_office', '搜捕队队长': 'paranormal_office', '搜捕队队员': 'paranormal_office', '灵异所文员': 'paranormal_office',
+  '观察者首领': 'observers', '情报搜集员': 'observers', '情报处理员': 'observers'
+};
+
+const resolveHomeFromJob = (job?: string | null) => {
+  if (!job) return null;
+  return JOB_HOME_MAP[job] || null;
+};
 
 const issueToken = () => crypto.randomBytes(24).toString('hex');
 
@@ -960,6 +989,28 @@ app.post('/api/auth/login', async (req, res) => {
   `).run(token, user.id, user.name);
 
   res.json({ success: true, token, userId: user.id, name: user.name });
+});
+
+app.post('/api/users', (req, res) => {
+  let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
+  const finalAge = age || 18;
+  const finalGold = Number(gold || 0);
+
+  if (finalAge < 16) role = '未分化';
+
+  const homeLocation = resolveInitialHome(finalAge, finalGold);
+
+  try {
+    db.prepare(`
+      UPDATE users
+      SET role=?, age=?, mentalRank=?, physicalRank=?, gold=?, ability=?, spiritName=?, spiritType=?, status='pending', homeLocation=?
+      WHERE name=?
+    `).run(role, finalAge, mentalRank, physicalRank, finalGold, ability, spiritName, spiritType, homeLocation, name);
+
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message });
+  }
 });
 
 // 管理员双重验证登录（代码 + 名字白名单）
@@ -1908,6 +1959,11 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
   });
 
   app.post('/api/tower/interact-spirit', (req, res) => {
+    const roleRow = db.prepare('SELECT role FROM users WHERE id=?').get(userId) as any;
+if (!roleRow || !['哨兵', '向导'].includes(String(roleRow.role || ''))) {
+  return res.status(403).json({ success: false, message: '仅哨兵/向导可进行精神体交互' });
+}
+
     const { userId, intimacyGain, imageUrl, name } = req.body;
 
     let status = db.prepare('SELECT * FROM spirit_status WHERE userId = ?').get(userId) as any;
@@ -1959,7 +2015,9 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
         return res.json({ success: false, message: '该职位名额满。' });
       }
 
-      db.prepare('UPDATE users SET job = ? WHERE id = ?').run(finalJob, userId);
+      const homeByJob = resolveHomeFromJob(finalJob);
+db.prepare('UPDATE users SET job = ?, homeLocation = ? WHERE id = ?')
+  .run(finalJob, homeByJob || null, userId);
       res.json({ success: true, job: finalJob });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
@@ -2012,6 +2070,55 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
       res.status(500).json({ success: false, message: e.message });
     }
   });
+  app.get('/api/homes/:ownerId', requireUserAuth, (req: any, res) => {
+  const ownerId = Number(req.params.ownerId);
+  const owner = db.prepare(`
+    SELECT id, name, avatarUrl, job, role, homeLocation, roomBgImage, roomDescription, allowVisit
+    FROM users WHERE id=?
+  `).get(ownerId) as any;
+
+  if (!owner) return res.status(404).json({ success: false, message: '房主不存在' });
+
+  const isSelf = ownerId === req.user.id;
+  if (!isSelf && Number(owner.allowVisit || 0) !== 1) {
+    return res.status(403).json({ success: false, message: '房主禁止访问' });
+  }
+
+  res.json({ success: true, home: owner, isSelf });
+});
+
+  app.get('/api/homes/location/:locationId', requireUserAuth, (req, res) => {
+  const locationId = String(req.params.locationId || '');
+  const rows = db.prepare(`
+    SELECT id, name, avatarUrl, job, role, homeLocation, allowVisit
+    FROM users
+    WHERE homeLocation = ? AND status IN ('approved','ghost')
+    ORDER BY id DESC
+  `).all(locationId);
+  res.json({ success: true, residents: rows });
+});
+
+  app.put('/api/users/:id/home', requireUserAuth, (req: any, res) => {
+  const uid = Number(req.params.id);
+  if (uid !== req.user.id) return res.status(403).json({ success: false, message: '无权限' });
+
+  const target = String(req.body?.locationId || '').trim(); // slums / rich_area / sanctuary / auto
+  const me = db.prepare('SELECT age, gold FROM users WHERE id=?').get(uid) as any;
+  if (!me) return res.status(404).json({ success: false, message: '用户不存在' });
+
+  let home = target;
+  if (me.age < 16) {
+    home = 'sanctuary'; // 未分化固定圣所
+  } else if (target === 'auto') {
+    home = resolveInitialHome(Number(me.age), Number(me.gold || 0));
+  } else if (!['slums', 'rich_area'].includes(target) && target !== 'sanctuary') {
+    return res.status(400).json({ success: false, message: '非法家园位置' });
+  }
+
+  db.prepare('UPDATE users SET homeLocation=? WHERE id=?').run(home, uid);
+  res.json({ success: true, homeLocation: home });
+});
+
 
   app.post('/api/tower/rest', (req, res) => {
     const { userId } = req.body;
