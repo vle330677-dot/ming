@@ -36,27 +36,31 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
       .catch(() => {});
   }, [currentUser.id, targetUser.id]);
 
-  // 放在组件内（PlayerInteractionUI 函数里）
-const resolveAvatarSrc = (u: any) => {
-  const raw = u?.avatarUrl ?? u?.avatar ?? u?.imageUrl ?? '';
-  if (!raw || typeof raw !== 'string') return '';
-  const s = raw.trim();
-  if (!s) return '';
+  // ✅ 头像地址解析 + 版本戳破缓存
+  const resolveAvatarSrc = (u: any) => {
+    const raw = u?.avatarUrl ?? u?.avatar ?? u?.imageUrl ?? '';
+    if (!raw || typeof raw !== 'string') return '';
+    const s = raw.trim();
+    if (!s) return '';
 
-  // 合法可访问地址：data/base64、http(s)、站内绝对路径
-  if (/^data:image\//.test(s) || /^https?:\/\//.test(s) || s.startsWith('/')) return s;
+    let base = s;
+    if (!/^data:image\//.test(s) && !/^https?:\/\//.test(s) && !s.startsWith('/')) {
+      base = `/${s.replace(/^\.?\//, '')}`;
+    }
 
-  // 兜底：相对路径转站内路径
-  return `/${s.replace(/^\.?\//, '')}`;
-};
+    if (/^data:image\//.test(base)) return base;
 
-const targetAvatarSrc = useMemo(() => resolveAvatarSrc(targetUser), [targetUser]);
-const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+    const ver = u?.avatarUpdatedAt ? encodeURIComponent(String(u.avatarUpdatedAt)) : '';
+    if (!ver) return base;
+    return base.includes('?') ? `${base}&v=${ver}` : `${base}?v=${ver}`;
+  };
 
-useEffect(() => {
-  setAvatarLoadFailed(false);
-}, [targetAvatarSrc, targetUser?.id]);
+  const targetAvatarSrc = useMemo(() => resolveAvatarSrc(targetUser), [targetUser]);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [targetAvatarSrc, targetUser?.id]);
 
   // ESC 关闭（可控，不依赖点背景）
   useEffect(() => {
@@ -257,7 +261,7 @@ useEffect(() => {
     }
   };
 
-  // 普通人看鬼魂：也不给背景点击关闭，避免误触瞬关
+  // 普通人看鬼魂
   if (currentUser.role === '普通人' && targetUser.role === '鬼魂') {
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -299,11 +303,14 @@ useEffect(() => {
         </button>
 
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
-          {/* ================= 🚀 修复点 ================= */}
-          {/* 这里将 object-cover 改为了 object-contain，这样图片将按原比例完整显示而不会被裁剪 */}
           <div className="w-48 h-64 bg-slate-900 rounded-2xl border-4 border-slate-700 overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto flex items-center justify-center">
-            {targetUser.avatarUrl ? (
-              <img src={targetUser.avatarUrl} className="w-full h-full object-contain" alt="avatar" />
+            {targetAvatarSrc && !avatarLoadFailed ? (
+              <img
+                src={targetAvatarSrc}
+                className="w-full h-full object-contain"
+                alt="avatar"
+                onError={() => setAvatarLoadFailed(true)}
+              />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-6xl text-slate-600 font-black">
                 {targetUser.name[0]}
