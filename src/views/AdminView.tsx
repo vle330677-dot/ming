@@ -112,6 +112,42 @@ interface AdminActionLog {
   detail?: string;
   createdAt: string;
 }
+type ReviewType =
+  | 'create_role'
+  | 'death'
+  | 'reskin'
+  | 'role_vote'
+  | 'custom_game';
+
+interface ReviewRule {
+  type: ReviewType;
+  requiredApprovals: number;
+}
+
+interface ReviewVoteRecord {
+  approveBy: string[];
+  rejectBy: string[];
+}
+
+const REVIEW_LABEL: Record<ReviewType, string> = {
+  create_role: '创角色审核',
+  death: '死亡审核',
+  reskin: '换皮审核',
+  role_vote: '角色投票',
+  custom_game: '自定义游戏审核'
+};
+
+const REVIEW_RULES_STORAGE_KEY = 'ADMIN_REVIEW_RULES_V1';
+const REVIEW_VOTES_STORAGE_KEY = 'ADMIN_REVIEW_VOTES_V1';
+
+const DEFAULT_REVIEW_RULES: ReviewRule[] = [
+  { type: 'create_role', requiredApprovals: 1 },
+  { type: 'death', requiredApprovals: 1 },
+  { type: 'reskin', requiredApprovals: 1 },
+  { type: 'role_vote', requiredApprovals: 2 },
+  { type: 'custom_game', requiredApprovals: 2 }
+];
+
 
 const FACTIONS = ['物理系', '元素系', '精神系', '感知系', '信息系', '治疗系', '强化系', '炼金系', '圣所', '普通人', '通用'];
 const TIERS = ['低阶', '中阶', '高阶'];
@@ -159,6 +195,11 @@ export function AdminView() {
   const [skillFactionFilter, setSkillFactionFilter] = useState('ALL');
 
   const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null);
+
+    // ---------------- 审核规则与会签 ----------------
+  const [showReviewConfig, setShowReviewConfig] = useState(false);
+  const [reviewRules, setReviewRules] = useState<ReviewRule[]>(DEFAULT_REVIEW_RULES);
+  const [reviewVotes, setReviewVotes] = useState<Record<string, ReviewVoteRecord>>({});
 
 const handleDeleteArchive = async (arc: RPArchive) => {
   if (!confirm(`确定删除存档《${arc.title}》吗？此操作不可恢复。`)) return;
@@ -224,6 +265,32 @@ const handleDeleteArchive = async (arc: RPArchive) => {
     setFlash(msg);
     setTimeout(() => setFlash(''), 2600);
   };
+    const getRequiredApprovals = (type: ReviewType) => {
+    return Math.max(1, reviewRules.find(r => r.type === type)?.requiredApprovals || 1);
+  };
+
+  const setRequiredApprovals = (type: ReviewType, val: number) => {
+    const next = Math.max(1, Number(val) || 1);
+    setReviewRules(prev => prev.map(r => (r.type === type ? { ...r, requiredApprovals: next } : r)));
+  };
+
+  const inferReviewTypeForUser = (u: AdminUser, targetStatus: UserStatus): ReviewType => {
+    if (u.status === 'pending_death' || targetStatus === 'dead') return 'death';
+    if (u.status === 'pending_ghost') return 'reskin';
+    return 'create_role';
+  };
+
+  const buildVoteKey = (type: ReviewType, userId: number) => `${type}:user:${userId}`;
+
+  const getVoteProgress = (u: AdminUser, targetStatus: UserStatus) => {
+    const t = inferReviewTypeForUser(u, targetStatus);
+    const required = getRequiredApprovals(t);
+    const key = buildVoteKey(t, u.id);
+    const rec = reviewVotes[key] || { approveBy: [], rejectBy: [] };
+    const count = targetStatus === 'rejected' ? rec.rejectBy.length : rec.approveBy.length;
+    return { type: t, required, count, key };
+  };
+
 
   // ---------------- 初始化管理员会话 ----------------
   useEffect(() => {
@@ -374,6 +441,7 @@ const handleDeleteArchive = async (arc: RPArchive) => {
     setWhitelist([]);
     setOnlineAdmins([]);
     setAdminLogs([]);
+    setShowReviewConfig(false);
     setFlash('');
     setError('');
   };
@@ -539,6 +607,52 @@ const handleDeleteArchive = async (arc: RPArchive) => {
       alert('删除失败');
     }
   };
+    const applyStatusChangeWithVoting = async (u: AdminUser, targetStatus: UserStatus) => {
+    const reviewType = inferReviewTypeForUser(u, targetStatus);
+    const required = getRequiredApprovals(reviewType);
+
+    // 1票直通：保持你原有体验
+    if (required <= 1) {
+      await handleStatusChange(u.id, targetStatus, u);
+      return;
+    }
+
+    const voteKey = buildVoteKey(reviewType, u.id);
+    const me = (adminName || '').trim() || '未知管理员';
+    const current = reviewVotes[voteKey] || { approveBy: [], rejectBy: [] };
+    const isReject = targetStatus === 'rejected';
+
+    if (current.approveBy.includes(me) || current.rejectBy.includes(me)) {
+      alert(`你已对该审核投过票（${REVIEW_LABEL[reviewType]}）`);
+      return;
+    }
+
+    const next: ReviewVoteRecord = {
+      approveBy: isReject ? current.approveBy : [...current.approveBy, me],
+      rejectBy: isReject ? [...current.rejectBy, me] : current.rejectBy
+    };
+
+    setReviewVotes(prev => ({ ...prev, [voteKey]: next }));
+
+    const nowCount = isReject ? next.rejectBy.length : next.approveBy.length;
+    if (nowCount < required) {
+      showOk(`已记录${REVIEW_LABEL[reviewType]}投票：${nowCount}/${required}（还需 ${required - nowCount} 票）`);
+      return;
+    }
+
+    // 达阈值，执行原变更
+    await handleStatusChange(u.id, targetStatus, u);
+
+    // 清理该条票仓
+    setReviewVotes(prev => {
+      const cp = { ...prev };
+      delete cp[voteKey];
+      return cp;
+    });
+
+    showOk(`${REVIEW_LABEL[reviewType]}已达 ${required} 票，变更已执行`);
+  };
+
 
   // ---------------- 物品与技能 ----------------
   const addItem = async () => {
@@ -585,11 +699,48 @@ const handleDeleteArchive = async (arc: RPArchive) => {
       alert(e.message || '新增失败');
     }
   };
+  
 
   const filteredSkills = useMemo(() => {
     if (skillFactionFilter === 'ALL') return skills;
     return skills.filter(s => s.faction === skillFactionFilter);
   }, [skills, skillFactionFilter]);
+
+  type ReviewType =
+  | 'create_role'
+  | 'death'
+  | 'reskin'
+  | 'role_vote'
+  | 'custom_game';
+
+interface ReviewRule {
+  type: ReviewType;
+  requiredApprovals: number;
+}
+
+interface ReviewVoteRecord {
+  approveBy: string[];
+  rejectBy: string[];
+}
+
+const REVIEW_LABEL: Record<ReviewType, string> = {
+  create_role: '创角色审核',
+  death: '死亡审核',
+  reskin: '换皮审核',
+  role_vote: '角色投票',
+  custom_game: '自定义游戏审核'
+};
+
+const REVIEW_RULES_STORAGE_KEY = 'ADMIN_REVIEW_RULES_V1';
+const REVIEW_VOTES_STORAGE_KEY = 'ADMIN_REVIEW_VOTES_V1';
+
+const DEFAULT_REVIEW_RULES: ReviewRule[] = [
+  { type: 'create_role', requiredApprovals: 1 },
+  { type: 'death', requiredApprovals: 1 },
+  { type: 'reskin', requiredApprovals: 1 },
+  { type: 'role_vote', requiredApprovals: 2 },
+  { type: 'custom_game', requiredApprovals: 2 }
+];
 
   // ---------------- 公告 ----------------
   const publishAnnouncement = async () => {
@@ -609,6 +760,37 @@ const handleDeleteArchive = async (arc: RPArchive) => {
       alert(e.message || '发布失败');
     }
   };
+    // ---------------- 本地审核规则/投票记录 ----------------
+  useEffect(() => {
+    try {
+      const rulesRaw = localStorage.getItem(REVIEW_RULES_STORAGE_KEY);
+      if (rulesRaw) {
+        const parsed = JSON.parse(rulesRaw);
+        if (Array.isArray(parsed) && parsed.length) {
+          setReviewRules(parsed);
+        }
+      }
+    } catch {}
+
+    try {
+      const votesRaw = localStorage.getItem(REVIEW_VOTES_STORAGE_KEY);
+      if (votesRaw) {
+        const parsed = JSON.parse(votesRaw);
+        if (parsed && typeof parsed === 'object') {
+          setReviewVotes(parsed);
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(REVIEW_RULES_STORAGE_KEY, JSON.stringify(reviewRules));
+  }, [reviewRules]);
+
+  useEffect(() => {
+    localStorage.setItem(REVIEW_VOTES_STORAGE_KEY, JSON.stringify(reviewVotes));
+  }, [reviewVotes]);
+
 
   // ---------------- 登录UI：代码步骤 ----------------
   if (authStep === 'code') {
@@ -732,6 +914,59 @@ const handleDeleteArchive = async (arc: RPArchive) => {
           {/* 1) 用户 */}
           {activeTab === 'users' && (
             <motion.div key="users" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-[32px] shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-5 border-b border-slate-200 bg-slate-50/60">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-sm font-black text-slate-700">审核规则与统计</div>
+                  <button
+                    onClick={() => setShowReviewConfig(v => !v)}
+                    className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-black hover:bg-indigo-700"
+                  >
+                    {showReviewConfig ? '收起配置' : '展开配置'}
+                  </button>
+                </div>
+
+                {showReviewConfig && (
+                  <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                      <div className="text-xs font-black text-slate-500 uppercase mb-3">通过人数门槛</div>
+                      <div className="space-y-2">
+                        {(Object.keys(REVIEW_LABEL) as ReviewType[]).map((t) => (
+                          <div key={t} className="flex items-center justify-between gap-3">
+                            <span className="text-sm font-bold text-slate-700">{REVIEW_LABEL[t]}</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={getRequiredApprovals(t)}
+                              onChange={(e) => setRequiredApprovals(t, Number(e.target.value))}
+                              className="w-24 p-2 bg-slate-50 border border-slate-200 rounded-lg text-center font-bold text-sm"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                      <div className="text-xs font-black text-slate-500 uppercase mb-3">当前统计</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {(Object.keys(REVIEW_LABEL) as ReviewType[]).map((t) => {
+                          const s = reviewStats[t];
+                          return (
+                            <div key={t} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                              <div className="text-sm font-black text-slate-800">{REVIEW_LABEL[t]}</div>
+                              <div className="text-[12px] text-slate-500 mt-1">总计：{s.total}</div>
+                              <div className="text-[12px] text-amber-600">待审：{s.pending}</div>
+                              <div className="text-[12px] text-emerald-600">通过：{s.approved}</div>
+                              <div className="text-[12px] text-rose-600">驳回：{s.rejected}</div>
+                              <div className="text-[11px] text-indigo-600 mt-1">门槛：{getRequiredApprovals(t)} 人</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left whitespace-nowrap">
                   <thead className="bg-slate-50 border-b text-[11px] font-bold text-slate-400 uppercase tracking-wider">
@@ -781,12 +1016,16 @@ const handleDeleteArchive = async (arc: RPArchive) => {
                           <div className="flex items-center justify-end gap-3">
                             {u.status === 'pending' && (
                               <div className="flex gap-2 mr-4 border-r pr-4">
-                                <button onClick={() => handleStatusChange(u.id, 'approved')} className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors" title="通过">
+                                <button onClick={() => applyStatusChangeWithVoting(u, 'approved')} className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors" title="通过">
                                   <CheckCircle size={18} />
                                 </button>
-                                <button onClick={() => handleStatusChange(u.id, 'rejected')} className="p-1.5 bg-rose-100 text-rose-600 rounded-lg hover:bg-rose-500 hover:text-white transition-colors" title="驳回">
+                                <button onClick={() => applyStatusChangeWithVoting(u, 'rejected')} className="p-1.5 bg-rose-100 text-rose-600 rounded-lg hover:bg-rose-500 hover:text-white transition-colors" title="驳回">
                                   <XCircle size={18} />
                                 </button>
+                                <span className="text-[10px] text-slate-400 font-bold ml-1">
+  通过票 {getVoteProgress(u, 'approved').count}/{getVoteProgress(u, 'approved').required}
+</span>
+
                               </div>
                             )}
 
@@ -801,7 +1040,7 @@ const handleDeleteArchive = async (arc: RPArchive) => {
 
                                 {u.status === 'pending_death' && (
                                   <button
-                                    onClick={() => handleStatusChange(u.id, 'dead', u)}
+                                    onClick={() => applyStatusChangeWithVoting(u, 'dead')}
                                     className="p-1.5 bg-rose-100 text-rose-600 rounded-lg hover:bg-rose-500 hover:text-white transition-colors"
                                     title="准许死亡"
                                   >
@@ -811,7 +1050,7 @@ const handleDeleteArchive = async (arc: RPArchive) => {
 
                                 {u.status === 'pending_ghost' && (
                                   <button
-                                    onClick={() => handleStatusChange(u.id, 'approved', u)}
+                                    onClick={() => applyStatusChangeWithVoting(u, 'approved')}
                                     className="p-1.5 bg-violet-100 text-violet-600 rounded-lg hover:bg-violet-500 hover:text-white transition-colors"
                                     title="准许化鬼"
                                   >
@@ -820,7 +1059,7 @@ const handleDeleteArchive = async (arc: RPArchive) => {
                                 )}
 
                                 <button
-                                  onClick={() => handleStatusChange(u.id, 'rejected', u)}
+                                  onClick={() => applyStatusChangeWithVoting(u, 'rejected')}
                                   className="p-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-300 transition-colors"
                                   title="驳回"
                                 >
