@@ -14,7 +14,8 @@ interface RPMessage {
   sessionId: string;
   senderId: number | null;
   senderName: string;
-  senderAvatar?: string | null; // 头像字段
+  senderAvatar?: string | null;
+  senderAvatarUpdatedAt?: string | null; // ✅ 新增：用于头像缓存版本
   content: string;
   type: 'user' | 'system' | 'text';
   createdAt: string;
@@ -53,6 +54,26 @@ function getDefaultPos(minimized: boolean) {
     x: Math.max(12, window.innerWidth - w - 16),
     y: Math.max(12, window.innerHeight - h - 96)
   };
+}
+
+// ✅ 统一头像地址解析 + 版本戳（破缓存）
+function resolveAvatarSrc(raw: any, updatedAt?: any) {
+  if (!raw || typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (!s) return '';
+
+  let base = s;
+  // 相对路径兜底
+  if (!/^data:image\//.test(s) && !/^https?:\/\//.test(s) && !s.startsWith('/')) {
+    base = `/${s.replace(/^\.?\//, '')}`;
+  }
+
+  // base64 不拼版本参数
+  if (/^data:image\//.test(base)) return base;
+
+  const v = updatedAt ? encodeURIComponent(String(updatedAt)) : '';
+  if (!v) return base;
+  return base.includes('?') ? `${base}&v=${v}` : `${base}?v=${v}`;
 }
 
 export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
@@ -366,14 +387,22 @@ export function RoleplayWindow({ sessionId, currentUser, onClose }: Props) {
                     );
                   }
 
-                  const avatar = mine ? currentUser.avatarUrl : m.senderAvatar;
+                  const avatar = mine
+                    ? resolveAvatarSrc(
+                        (currentUser as any).avatarUrl,
+                        (currentUser as any).avatarUpdatedAt
+                      )
+                    : resolveAvatarSrc(
+                        m.senderAvatar,
+                        (m as any).senderAvatarUpdatedAt
+                      );
 
                   return (
                     <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                       <div className={`flex items-end gap-2 ${mine ? 'flex-row-reverse' : ''} max-w-[90%]`}>
                         <div className="w-7 h-7 rounded-full overflow-hidden border border-slate-600 shrink-0">
                           {avatar ? (
-                            <img src={avatar} className="w-full h-full object-cover" />
+                            <img src={avatar} className="w-full h-full object-cover" alt={m.senderName || 'avatar'} />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-[10px] bg-slate-700 text-white font-black">
                               {(m.senderName || '?')[0]}
