@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import HomeRoomView, { deriveInitialHomeLocation } from './rooms/HomeRoomView';
 import {
   ArrowLeft, X, Factory,
   ShoppingBag, AlertOctagon,
   Home, Store, FlaskConical, TrendingUp,
-  Coins, Hammer
+  Coins, Hammer, DoorOpen, Save
 } from 'lucide-react';
 import { User } from '../types';
 
@@ -13,6 +14,30 @@ interface Props {
   onExit: () => void;
   showToast: (msg: string) => void;
   fetchGlobalData: () => void;
+}
+
+interface RoomEntrance {
+  ownerId: number;
+  ownerName: string;
+  avatarUrl?: string;
+  job?: string;
+  role?: string;
+  intro?: string;
+  x: number;
+  y: number;
+  locked?: boolean;
+}
+
+interface RoomDetail {
+  ownerId: number;
+  ownerName: string;
+  avatarUrl?: string;
+  job?: string;
+  role?: string;
+  homeLocation?: string;
+  bgImage?: string;
+  description?: string;
+  visible?: boolean;
 }
 
 const buildings = [
@@ -40,10 +65,51 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
   const [myShop, setMyShop] = useState<any>(null);
   const [shopName, setShopName] = useState('');
   const [shopDesc, setShopDesc] = useState('');
+  const [currentHome, setCurrentHome] = useState<string>((user as any).homeLocation || '');
+
+  // 房间入口
+  const [roomEntrances, setRoomEntrances] = useState<RoomEntrance[]>([]);
+  const [selectedEntrance, setSelectedEntrance] = useState<RoomEntrance | null>(null);
+
+  // 独立房间页
+  const [enteredRoom, setEnteredRoom] = useState<RoomDetail | null>(null);
+  const [editDesc, setEditDesc] = useState('');
+  const [editBg, setEditBg] = useState('');
+  const [editVisible, setEditVisible] = useState(true);
 
   const isWestSide = Object.values(ROLES).includes(user.job || '');
   const isMayor = user.job === ROLES.CHIEF;
+  const isRoomOwner = enteredRoom && Number(enteredRoom.ownerId) === Number(user.id);
+
   const getScore = (rank?: string) => RANK_SCORES[rank || '无'] || 0;
+
+  const authHeaders = () => ({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${localStorage.getItem('USER_TOKEN') || ''}`
+  });
+
+  useEffect(() => {
+  fetch('/api/rooms/init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: user.id,
+      suggestedHomeLocation: deriveInitialHomeLocation(user as any),
+    })
+  }).catch(() => void 0);
+}, [user.id, user.age, user.gold, user.role]);
+
+  useEffect(() => {
+    setCurrentHome((user as any).homeLocation || '');
+  }, [user?.id, (user as any).homeLocation]);
+
+  useEffect(() => {
+    fetch('/api/rooms/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id })
+    }).catch(() => void 0);
+  }, [user.id]);
 
   useEffect(() => {
     if (selectedBuilding) {
@@ -53,11 +119,29 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
     }
   }, [selectedBuilding, user.id]);
 
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await fetch(`/api/rooms/entrances?locationId=slums&viewerId=${user.id}`);
+        const data = await res.json();
+        if (!alive) return;
+        if (data.success) setRoomEntrances(data.rows || []);
+      } catch {}
+    };
+    pull();
+    const t = setInterval(pull, 4000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [user.id]);
+
   const fetchAllUsers = async () => {
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/world/presence');
       const data = await res.json();
-      if (data.success) setAllPlayers(data.users || []);
+      if (data.success) setAllPlayers(data.players || []);
     } catch (e) {
       console.error(e);
     }
@@ -100,30 +184,36 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
     }
   };
 
-  // 核心修复：取消资产限制，直接走后端 home 接口
   const handleMoveIn = async () => {
     try {
       const res = await fetch(`/api/users/${user.id}/home`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT',
+        headers: authHeaders(),
         body: JSON.stringify({ locationId: 'slums' })
       });
       const data = await res.json().catch(() => ({ success: res.ok }));
-      if (!data.success && !res.ok) return showToast(data.message || "入住登记失败");
+      if (!res.ok || data.success === false) return showToast(data.message || '入住登记失败');
 
+      await fetch('/api/rooms/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id })
+      }).catch(() => void 0);
+
+      setCurrentHome('slums');
       showToast('已在西区登记常住人口！城市繁荣度 +100。');
       fetchGlobalData();
       fetchAllUsers();
     } catch (e) {
       console.error(e);
-      showToast("网络错误，入住失败");
+      showToast('网络错误，入住失败');
     }
   };
 
   const handleOpenShop = async () => {
     const cost = 10000;
     if ((user.gold || 0) < cost) return showToast(`资金不足！西区地价需要 ${cost}G。`);
-    if (!shopName.trim()) return showToast("请输入店铺名称！");
+    if (!shopName.trim()) return showToast('请输入店铺名称！');
 
     await fetch('/api/commissions', {
       method: 'POST',
@@ -142,7 +232,7 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
   };
 
   const handleShopWork = async () => {
-    if ((user.workCount || 0) >= 3) return showToast("今天接待了太多客人，关门休息吧。");
+    if ((user.workCount || 0) >= 3) return showToast('今天接待了太多客人，关门休息吧。');
     const res = await fetch('/api/tower/work', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -160,7 +250,7 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
     const data = await res.json();
     if (data.success) {
       const alchemySkills = data.skills.filter((s: any) => s.faction === '炼金系');
-      if (alchemySkills.length === 0) return showToast("暂时没有可学的炼金系技能。");
+      if (alchemySkills.length === 0) return showToast('暂时没有可学的炼金系技能。');
       const randomSkill = alchemySkills[Math.floor(Math.random() * alchemySkills.length)];
 
       const learnRes = await fetch(`/api/users/${user.id}/skills`, {
@@ -180,16 +270,95 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
         headers: { 'Content-Type': 'application/json' }
       });
       const data = await res.json();
-      if (!data.success) return showToast(data.message || "辞职失败");
+      if (!data.success) return showToast(data.message || '辞职失败');
 
-      showToast("已辞职。");
+      showToast('已辞职。');
       fetchGlobalData();
       setSelectedBuilding(null);
     } catch (e) {
       console.error(e);
-      showToast("网络错误，辞职失败");
+      showToast('网络错误，辞职失败');
     }
   };
+
+  const enterPersonalRoom = async () => {
+    if (!selectedEntrance) return;
+    try {
+      const detailRes = await fetch(`/api/rooms/${selectedEntrance.ownerId}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('USER_TOKEN') || ''}` }
+      });
+      const detailData = await detailRes.json().catch(() => ({}));
+      if (!detailRes.ok || detailData.success === false) {
+        return showToast(detailData.message || '读取房间信息失败');
+      }
+
+      if (selectedEntrance.locked && Number(selectedEntrance.ownerId) !== Number(user.id)) {
+        const pwd = window.prompt('该房间已上锁，请输入房间密码：') || '';
+        if (!pwd) return;
+        const vr = await fetch(`/api/rooms/${selectedEntrance.ownerId}/verify-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        const vd = await vr.json().catch(() => ({}));
+        if (!vd.pass) return showToast('密码错误，无法进入');
+      }
+
+      const enterRes = await fetch(`/api/rooms/${selectedEntrance.ownerId}/enter`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({})
+      });
+      const enterData = await enterRes.json().catch(() => ({}));
+      if (!enterRes.ok || enterData.success === false) return showToast(enterData.message || '进入房间失败');
+
+      const room = detailData.room as RoomDetail;
+      setEnteredRoom(room);
+      setEditDesc(room.description || '');
+      setEditBg(room.bgImage || '');
+      setEditVisible(Boolean(room.visible));
+      setSelectedEntrance(null);
+    } catch (e) {
+      console.error(e);
+      showToast('网络错误，进入失败');
+    }
+  };
+
+  const saveRoomSettings = async () => {
+    if (!enteredRoom || !isRoomOwner) return;
+    try {
+      const res = await fetch(`/api/rooms/${enteredRoom.ownerId}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          visible: editVisible,
+          roomDescription: editDesc,
+          roomBgImage: editBg
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return showToast(data.message || '保存失败');
+      setEnteredRoom({ ...enteredRoom, description: editDesc, bgImage: editBg, visible: editVisible });
+      showToast('房间设置已保存');
+    } catch (e) {
+      console.error(e);
+      showToast('网络错误，保存失败');
+    }
+  };
+
+  if (enteredRoom) {
+  return (
+    <HomeRoomView
+      currentUser={user as any}
+      room={enteredRoom as any}
+      sourceMap="slums"
+      onBack={() => setEnteredRoom(null)}
+      showToast={showToast}
+      onSaved={(next) => setEnteredRoom(next as any)}
+      refreshGlobalData={fetchGlobalData}
+    />
+  );
+}
 
   return (
     <div className="absolute inset-0 bg-stone-900 overflow-hidden font-sans select-none text-stone-300">
@@ -199,12 +368,25 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
       </div>
 
       <div className="absolute top-8 left-8 z-50">
-        <button
-          onClick={onExit}
-          className="bg-black/60 backdrop-blur-md text-stone-400 border border-stone-600 px-6 py-2 rounded-lg font-bold shadow-2xl flex items-center gap-2 hover:text-orange-500 hover:border-orange-500 transition-all"
-        >
+        <button onClick={onExit} className="bg-black/60 backdrop-blur-md text-stone-400 border border-stone-600 px-6 py-2 rounded-lg font-bold shadow-2xl flex items-center gap-2 hover:text-orange-500 hover:border-orange-500 transition-all">
           <ArrowLeft size={18} /> 离开西市
         </button>
+      </div>
+
+      {/* 房间入口点 */}
+      <div className="absolute inset-0 z-20 pointer-events-none">
+        {roomEntrances.map((r) => (
+          <button
+            key={r.ownerId}
+            className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto"
+            style={{ left: `${r.x}%`, top: `${r.y}%` }}
+            onClick={() => setSelectedEntrance(r)}
+          >
+            <div className="w-9 h-9 rounded-full bg-black/85 border border-orange-400 text-orange-200 flex items-center justify-center shadow-lg hover:scale-110 transition-all">
+              🏠
+            </div>
+          </button>
+        ))}
       </div>
 
       {buildings.map(b => (
@@ -224,6 +406,27 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
           </div>
         </div>
       ))}
+
+      {/* 房间入口弹窗 */}
+      <AnimatePresence>
+        {selectedEntrance && (
+          <motion.div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 p-4 text-slate-100">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-black text-lg">{selectedEntrance.ownerName} 的房间</h3>
+                <button onClick={() => setSelectedEntrance(null)} className="p-1 rounded bg-slate-800"><X size={14} /></button>
+              </div>
+              <p className="text-xs text-slate-400 mb-2">{selectedEntrance.job || selectedEntrance.role || '自由人'}</p>
+              <p className="text-sm bg-slate-800 border border-slate-700 rounded-xl p-3 min-h-[72px]">
+                {selectedEntrance.intro || '房主还没有写房间介绍。'}
+              </p>
+              <button onClick={enterPersonalRoom} className="w-full mt-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 font-bold">
+                进入房间
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {selectedBuilding && (
@@ -270,12 +473,7 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
                         <p className="text-stone-500 text-xs mb-1 uppercase tracking-widest">Current Position</p>
                         <p className="text-2xl font-black text-white mb-6">{user.job}</p>
 
-                        <button
-                          onClick={() => {
-                            if (confirm("确定要辞去西区职务吗？")) handleQuit();
-                          }}
-                          className="text-xs text-rose-500 hover:text-rose-400 underline"
-                        >
+                        <button onClick={() => { if (confirm('确定要辞去西区职务吗？')) handleQuit(); }} className="text-xs text-rose-500 hover:text-rose-400 underline">
                           辞去职务
                         </button>
                       </div>
@@ -297,7 +495,7 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
                           </div>
                         </div>
                         <button
-                          onClick={() => showToast(westProsperity > eastProsperity ? "结算成功！已从东区抽成10%资金！(模拟)" : "繁荣度不足，无法发起经济掠夺！")}
+                          onClick={() => showToast(westProsperity > eastProsperity ? '结算成功！已从东区抽成10%资金！(模拟)' : '繁荣度不足，无法发起经济掠夺！')}
                           className="w-full py-3 bg-orange-800 hover:bg-orange-700 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 transition-colors"
                         >
                           <Coins size={14} /> 发起经济战结算
@@ -318,7 +516,7 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
                       </p>
                     </div>
 
-                    {(user as any).homeLocation === 'slums' ? (
+                    {currentHome === 'slums' ? (
                       <div className="py-3 px-4 bg-emerald-900/30 text-emerald-500 font-bold border border-emerald-800 rounded-lg text-sm">
                         你已是西市的合法居民。
                       </div>
@@ -348,10 +546,8 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
                         <div className="bg-stone-800 p-4 rounded-lg border border-stone-700 text-xs text-stone-400">
                           <span className="text-orange-500 font-bold">商机提示：</span> 在这里投资一家属于自己的小店，不仅能赚取客人的打赏，还能大幅提升西区繁荣度。
                         </div>
-
                         <input type="text" placeholder="给店铺起个响亮的名字..." value={shopName} onChange={e => setShopName(e.target.value)} className="w-full p-4 bg-black border border-stone-700 text-white rounded-lg outline-none focus:border-orange-500 transition-colors text-sm" />
                         <textarea placeholder="写一段吸引人的店铺简介..." value={shopDesc} onChange={e => setShopDesc(e.target.value)} className="w-full p-4 bg-black border border-stone-700 text-white rounded-lg outline-none focus:border-orange-500 transition-colors h-24 text-sm resize-none" />
-
                         <button onClick={handleOpenShop} className="w-full py-4 bg-stone-100 text-stone-900 font-black hover:bg-white transition-all rounded-lg flex items-center justify-center gap-2">
                           <Hammer size={18} /> 支付 10,000G 装修开业
                         </button>
@@ -371,7 +567,6 @@ export function SlumsView({ user, onExit, showToast, fetchGlobalData }: Props) {
                         西区汇聚了无数被流放的疯狂科学家。<br />你可以在这里的废料堆中，淘到失传的炼金图谱。
                       </p>
                     </div>
-
                     <button onClick={handleLearnSkill} className="w-full py-4 bg-emerald-900/30 text-emerald-400 border border-emerald-800 font-black hover:bg-emerald-800 hover:text-white transition-all rounded-lg">
                       探寻炼金奥义 (随机获取技能)
                     </button>

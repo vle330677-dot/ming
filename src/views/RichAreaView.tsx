@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import HomeRoomView, { deriveInitialHomeLocation } from './rooms/HomeRoomView';
+
 import {
   ArrowLeft, X, Gem,
   Landmark, ShoppingBag,
-  Crown, Home, TrendingUp, ShieldAlert, Coins
+  Crown, Home, TrendingUp, ShieldAlert, Coins, DoorOpen, Save
 } from 'lucide-react';
 import { User } from '../types';
 
@@ -12,6 +14,30 @@ interface Props {
   onExit: () => void;
   showToast: (msg: string) => void;
   fetchGlobalData: () => void;
+}
+
+interface RoomEntrance {
+  ownerId: number;
+  ownerName: string;
+  avatarUrl?: string;
+  job?: string;
+  role?: string;
+  intro?: string;
+  x: number;
+  y: number;
+  locked?: boolean;
+}
+
+interface RoomDetail {
+  ownerId: number;
+  ownerName: string;
+  avatarUrl?: string;
+  job?: string;
+  role?: string;
+  homeLocation?: string;
+  bgImage?: string;
+  description?: string;
+  visible?: boolean;
 }
 
 const buildings = [
@@ -43,14 +69,51 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
   const [myShop, setMyShop] = useState<any>(null);
   const [shopName, setShopName] = useState('');
   const [shopDesc, setShopDesc] = useState('');
+  const [currentHome, setCurrentHome] = useState<string>((user as any).homeLocation || '');
+
+  // 房间入口
+  const [roomEntrances, setRoomEntrances] = useState<RoomEntrance[]>([]);
+  const [selectedEntrance, setSelectedEntrance] = useState<RoomEntrance | null>(null);
+
+  // 独立房间页
+  const [enteredRoom, setEnteredRoom] = useState<RoomDetail | null>(null);
+  const [editDesc, setEditDesc] = useState('');
+  const [editBg, setEditBg] = useState('');
+  const [editVisible, setEditVisible] = useState(true);
 
   const isEastSide = Object.values(ROLES).includes(user.job || '');
   const isMayor = user.job === ROLES.CHIEF;
+  const isRoomOwner = enteredRoom && Number(enteredRoom.ownerId) === Number(user.id);
+
   const getScore = (rank?: string) => RANK_SCORES[rank || '无'] || 0;
 
-  // 本地家园映射（替代不存在的 /api/users/:id/home）
-  const homeMap = safeParse<Record<string, string>>(localStorage.getItem('user_home_map'), {});
-  const currentHome = homeMap[String(user.id)] || (user as any).homeLocation || '';
+  const authHeaders = () => ({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${localStorage.getItem('USER_TOKEN') || ''}`
+  });
+
+useEffect(() => {
+  fetch('/api/rooms/init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: user.id,
+      suggestedHomeLocation: deriveInitialHomeLocation(user as any),
+    })
+  }).catch(() => void 0);
+}, [user.id, user.age, user.gold, user.role]);
+
+  useEffect(() => {
+    setCurrentHome((user as any).homeLocation || '');
+  }, [user?.id, (user as any).homeLocation]);
+
+  useEffect(() => {
+    fetch('/api/rooms/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id })
+    }).catch(() => void 0);
+  }, [user.id]);
 
   useEffect(() => {
     if (selectedBuilding?.id === 'city_hall' || selectedBuilding?.id === 'mall') {
@@ -60,18 +123,38 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
     }
   }, [selectedBuilding, user.id]);
 
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await fetch(`/api/rooms/entrances?locationId=rich_area&viewerId=${user.id}`);
+        const data = await res.json();
+        if (!alive) return;
+        if (data.success) setRoomEntrances(data.rows || []);
+      } catch {
+        // ignore
+      }
+    };
+    pull();
+    const t = setInterval(pull, 4000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [user.id]);
+
   const fetchAllUsers = async () => {
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/world/presence');
       const data = await res.json();
-      if (data.success) setAllPlayers(data.users || []);
+      if (data.success) setAllPlayers(data.players || []);
     } catch (e) {
       console.error(e);
     }
   };
 
-  const westResidents = allPlayers.filter((p) => p.currentLocation === 'slums').length;
-  const eastResidents = allPlayers.filter((p) => p.currentLocation === 'rich_area').length;
+  const westResidents = allPlayers.filter((p) => (p.currentLocation || '') === 'slums').length;
+  const eastResidents = allPlayers.filter((p) => (p.currentLocation || '') === 'rich_area').length;
   const westShopsCount = Object.keys(safeParse(localStorage.getItem('shops_slums'), {})).length;
   const eastShopsCount = Object.keys(safeParse(localStorage.getItem('shops_rich_area'), {})).length;
 
@@ -107,22 +190,29 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
   const handleMoveIn = async () => {
     if ((user.gold || 0) < 10000) return showToast('门卫：抱歉，您的资产不足 10,000G，无法在东区置办房产。');
 
-    // ✅ 原来调用不存在的 /api/users/:id/home，改为可运行方案：
-    // 1) 更新当前驻足地点（后端已有接口）
-    await fetch(`/api/users/${user.id}/location`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ locationId: 'rich_area' })
-    });
+    try {
+      const res = await fetch(`/api/users/${user.id}/home`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ locationId: 'rich_area' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return showToast(data.message || '入住登记失败');
 
-    // 2) 在前端保存 home 映射（临时方案，直到你后端补 homeLocation 字段）
-    const map = safeParse<Record<string, string>>(localStorage.getItem('user_home_map'), {});
-    map[String(user.id)] = 'rich_area';
-    localStorage.setItem('user_home_map', JSON.stringify(map));
+      await fetch('/api/rooms/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id })
+      }).catch(() => void 0);
 
-    showToast('已成功买下东区庄园！城市繁荣度大幅提升 (+1000)。');
-    fetchGlobalData();
-    fetchAllUsers();
+      setCurrentHome('rich_area');
+      showToast('已成功买下东区庄园！城市繁荣度大幅提升 (+1000)。');
+      fetchGlobalData();
+      fetchAllUsers();
+    } catch (e) {
+      console.error(e);
+      showToast('网络错误，入住失败');
+    }
   };
 
   const handleOpenShop = async () => {
@@ -130,7 +220,6 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
     if ((user.gold || 0) < cost) return showToast(`资金不足！东区寸土寸金，地价需要 ${cost}G。`);
     if (!shopName.trim()) return showToast('请输入店铺名称！');
 
-    // 保留你的扣款模拟逻辑
     await fetch('/api/commissions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -179,6 +268,88 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
     }
   };
 
+  const enterPersonalRoom = async () => {
+    if (!selectedEntrance) return;
+    try {
+      const detailRes = await fetch(`/api/rooms/${selectedEntrance.ownerId}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('USER_TOKEN') || ''}` }
+      });
+      const detailData = await detailRes.json().catch(() => ({}));
+      if (!detailRes.ok || detailData.success === false) {
+        return showToast(detailData.message || '读取房间信息失败');
+      }
+
+      if (selectedEntrance.locked && Number(selectedEntrance.ownerId) !== Number(user.id)) {
+        const pwd = window.prompt('该房间已上锁，请输入房间密码：') || '';
+        if (!pwd) return;
+        const vr = await fetch(`/api/rooms/${selectedEntrance.ownerId}/verify-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        const vd = await vr.json().catch(() => ({}));
+        if (!vd.pass) return showToast('密码错误，无法进入');
+      }
+
+      const enterRes = await fetch(`/api/rooms/${selectedEntrance.ownerId}/enter`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({})
+      });
+      const enterData = await enterRes.json().catch(() => ({}));
+      if (!enterRes.ok || enterData.success === false) {
+        return showToast(enterData.message || '进入房间失败');
+      }
+
+      const room = detailData.room as RoomDetail;
+      setEnteredRoom(room);
+      setEditDesc(room.description || '');
+      setEditBg(room.bgImage || '');
+      setEditVisible(Boolean(room.visible));
+      setSelectedEntrance(null);
+    } catch (e) {
+      console.error(e);
+      showToast('网络错误，进入失败');
+    }
+  };
+
+  const saveRoomSettings = async () => {
+    if (!enteredRoom || !isRoomOwner) return;
+    try {
+      const res = await fetch(`/api/rooms/${enteredRoom.ownerId}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          visible: editVisible,
+          roomDescription: editDesc,
+          roomBgImage: editBg
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) return showToast(data.message || '保存失败');
+
+      setEnteredRoom({ ...enteredRoom, description: editDesc, bgImage: editBg, visible: editVisible });
+      showToast('房间设置已保存');
+    } catch (e) {
+      console.error(e);
+      showToast('网络错误，保存失败');
+    }
+  };
+
+  if (enteredRoom) {
+  return (
+    <HomeRoomView
+      currentUser={user as any}
+      room={enteredRoom as any}
+      sourceMap="rich_area"
+      onBack={() => setEnteredRoom(null)}
+      showToast={showToast}
+      onSaved={(next) => setEnteredRoom(next as any)}
+      refreshGlobalData={fetchGlobalData}
+    />
+  );
+}
+
   return (
     <div className="absolute inset-0 bg-slate-50 overflow-hidden font-serif select-none text-slate-800">
       <div className="absolute inset-0 z-0">
@@ -190,6 +361,22 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
         <button onClick={onExit} className="bg-white/90 backdrop-blur-md text-emerald-800 border border-emerald-200/50 px-5 py-2.5 rounded-full font-bold shadow-xl flex items-center gap-2 hover:bg-emerald-50 hover:scale-105 transition-all active:scale-95">
           <ArrowLeft size={18} /> <span className="hidden md:inline">离开富人区</span>
         </button>
+      </div>
+
+      {/* 房间入口点 */}
+      <div className="absolute inset-0 z-20 pointer-events-none">
+        {roomEntrances.map((r) => (
+          <button
+            key={r.ownerId}
+            className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto"
+            style={{ left: `${r.x}%`, top: `${r.y}%` }}
+            onClick={() => setSelectedEntrance(r)}
+          >
+            <div className="w-9 h-9 rounded-full bg-slate-900/90 border border-amber-300 text-amber-200 flex items-center justify-center shadow-lg hover:scale-110 transition-all">
+              🏠
+            </div>
+          </button>
+        ))}
       </div>
 
       <div className="relative z-10 w-full h-full">
@@ -208,6 +395,28 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
         ))}
       </div>
 
+      {/* 房间入口弹窗 */}
+      <AnimatePresence>
+        {selectedEntrance && (
+          <motion.div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 p-4 text-slate-100">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-black text-lg">{selectedEntrance.ownerName} 的房间</h3>
+                <button onClick={() => setSelectedEntrance(null)} className="p-1 rounded bg-slate-800"><X size={14} /></button>
+              </div>
+              <p className="text-xs text-slate-400 mb-2">{selectedEntrance.job || selectedEntrance.role || '自由人'}</p>
+              <p className="text-sm bg-slate-800 border border-slate-700 rounded-xl p-3 min-h-[72px]">
+                {selectedEntrance.intro || '房主还没有写房间介绍。'}
+              </p>
+              <button onClick={enterPersonalRoom} className="w-full mt-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 font-bold">
+                进入房间
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 原建筑弹窗（保留） */}
       <AnimatePresence>
         {selectedBuilding && (
           <>
@@ -281,7 +490,6 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
                         <div className="absolute inset-0 bg-emerald-100 rounded-full blur-xl opacity-50" />
                         <Home size={64} className="mx-auto text-emerald-600 relative z-10" />
                       </div>
-
                       <div>
                         <h3 className="text-2xl font-black text-slate-800 mb-2">购置顶级庄园</h3>
                         <p className="text-sm text-slate-500 leading-relaxed max-w-xs mx-auto">
@@ -289,7 +497,6 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
                           <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded">入住验资条件：资产 &gt; 10,000G</span>
                         </p>
                       </div>
-
                       {currentHome === 'rich_area' ? (
                         <div className="p-5 bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 rounded-2xl flex items-center justify-center gap-2 shadow-sm">
                           <Crown size={18} /> 您已是尊贵的东区户主
@@ -309,7 +516,6 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
                           <Gem size={48} className="mx-auto text-amber-500 mb-4 drop-shadow-md" />
                           <h3 className="text-2xl font-black text-amber-900 mb-2">{myShop.name}</h3>
                           <p className="text-xs text-amber-700/80 mb-8 italic font-medium">"{myShop.desc}"</p>
-
                           <button onClick={handleShopWork} className="w-full py-4 bg-amber-500 text-white font-black hover:bg-amber-600 rounded-2xl shadow-lg shadow-amber-200 transition-all flex items-center justify-center gap-2">
                             <Coins size={18} /> 商业剪彩 / 对戏接客 (+1000G)
                           </button>
@@ -319,12 +525,10 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
                           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-center">
                             <p className="text-xs text-slate-500 font-bold">购买黄金地段商铺，赚取高额利润并拉升东区繁荣指数。</p>
                           </div>
-
                           <div className="space-y-3">
                             <input type="text" placeholder="输入奢侈品牌名称..." value={shopName} onChange={(e) => setShopName(e.target.value)} className="w-full p-4 bg-white border border-slate-200 rounded-xl outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-50 transition-all font-bold" />
                             <textarea placeholder="品牌格调简介..." value={shopDesc} onChange={(e) => setShopDesc(e.target.value)} className="w-full p-4 bg-white border border-slate-200 rounded-xl outline-none h-24 focus:border-amber-400 focus:ring-4 focus:ring-amber-50 transition-all resize-none text-sm" />
                           </div>
-
                           <button onClick={handleOpenShop} className="w-full py-4 bg-slate-900 text-amber-400 font-black hover:bg-slate-800 rounded-2xl shadow-xl transition-all flex justify-center items-center gap-2">
                             <Gem size={18} /> 全款买下地皮 (需 100,000G)
                           </button>
@@ -339,12 +543,10 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
                         <div className="absolute inset-0 bg-sky-100 rounded-full blur-xl opacity-60" />
                         <ShieldAlert size={64} className="mx-auto text-sky-600 relative z-10" />
                       </div>
-
                       <div>
                         <h3 className="text-2xl font-black text-slate-800 mb-2">顶级肉体强化</h3>
                         <p className="text-sm text-slate-500 max-w-xs mx-auto">使用最先进仪器进行机能刺激训练。</p>
                       </div>
-
                       <button onClick={handleLearnSkill} className="w-full py-5 bg-sky-50 text-sky-700 font-black hover:bg-sky-100 rounded-2xl border border-sky-200 transition-all text-sm uppercase tracking-wider">
                         申请高级强化课程 (随机获取)
                       </button>
@@ -362,11 +564,15 @@ export function RichAreaView({ user, onExit, showToast, fetchGlobalData }: Props
 
 function EliteCard({ title, sub, qualified, onClick }: any) {
   return (
-    <button onClick={onClick} disabled={!qualified} className={`w-full p-5 border rounded-2xl flex justify-between items-center group transition-all ${
-      qualified
-        ? 'bg-white border-slate-200 hover:border-amber-400 hover:shadow-lg cursor-pointer'
-        : 'bg-slate-50 border-slate-100 opacity-60 grayscale cursor-not-allowed'
-    }`}>
+    <button
+      onClick={onClick}
+      disabled={!qualified}
+      className={`w-full p-5 border rounded-2xl flex justify-between items-center group transition-all ${
+        qualified
+          ? 'bg-white border-slate-200 hover:border-amber-400 hover:shadow-lg cursor-pointer'
+          : 'bg-slate-50 border-slate-100 opacity-60 grayscale cursor-not-allowed'
+      }`}
+    >
       <div className="text-left">
         <div className={`font-black text-sm ${qualified ? 'text-slate-800 group-hover:text-amber-700' : 'text-slate-500'}`}>{title}</div>
         <div className="text-[10px] text-slate-400 font-serif italic mt-1">{sub}</div>
