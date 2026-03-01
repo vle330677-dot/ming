@@ -5,7 +5,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRpRouter } from './server/rp.routes';
-import { createCustomGameRouter } from './server/routes/customGame.routes';
+import { createCustomGameRouter } from './server/routes/customGame.routes.ts';
+
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
