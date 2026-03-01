@@ -75,6 +75,24 @@ function buildPairSessionId(a: number, b: number, locationId: string) {
   return `rp-${locationId || 'unknown'}-${min}-${max}`;
 }
 
+// ✅ 统一头像地址解析 + 版本戳
+function resolveAvatarSrc(raw: any, updatedAt?: any) {
+  if (!raw || typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (!s) return '';
+
+  let base = s;
+  if (!/^data:image\//.test(s) && !/^https?:\/\//.test(s) && !s.startsWith('/')) {
+    base = `/${s.replace(/^\.?\//, '')}`;
+  }
+
+  if (/^data:image\//.test(base)) return base;
+
+  const v = updatedAt ? encodeURIComponent(String(updatedAt)) : '';
+  if (!v) return base;
+  return base.includes('?') ? `${base}&v=${v}` : `${base}?v=${v}`;
+}
+
 export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) {
   const [selectedLocation, setSelectedLocation] = useState<any>(null);
   const [activeView, setActiveView] = useState<string | null>(null);
@@ -464,12 +482,12 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     // 寻找当前地点的物理坐标信息
     const loc = LOCATIONS.find((l) => l.id === effectiveLocationId);
     const isWorldMap = !activeView; // 如果没有 activeView，说明在大地图视角
-    
+
     // 定位基准点：如果在大地图，基准点直接绑定该地标坐标（稍微往上移一点点免得挡住文字）；
     // 如果在进入了室内区域，基准点在屏幕中心（50, 50）
     const baseX = isWorldMap && loc ? loc.x : 50;
     const baseY = isWorldMap && loc ? loc.y - 4 : 50;
-    
+
     // 头像散布的范围限制：大地图聚集在坐标点周围，室内可以稍微散开
     const spread = isWorldMap ? 6 : 30;
 
@@ -626,12 +644,13 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
         )}
       </AnimatePresence>
 
-      {/* ================= 🚀 修复点：移出 activeView 条件，独立存在 ================= */}
-      {/* 现在它只会安静地悬浮在玩家真正该在的地标上方，不再到处乱飘 */}
+      {/* 气泡头像区 */}
       <div className="absolute inset-0 z-30 pointer-events-none">
         {localPlayers.map((p, idx) => {
           const b = bubbleLayout[String(p.id)];
           if (!b) return null;
+
+          const avatarSrc = resolveAvatarSrc(p.avatarUrl, p.avatarUpdatedAt);
 
           return (
             <motion.div
@@ -646,7 +665,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
               animate={{
                 opacity: 1,
                 scale: b.scale,
-                // 去掉之前漫天乱窜的 x/y 动画，只留下轻微的呼吸呼吸（上下 3px 浮动）
                 y: [0, -3, 0]
               }}
               transition={{
@@ -664,8 +682,8 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
                     opacity: 0.78 + b.depth * 0.22
                   }}
                 >
-                  {p.avatarUrl ? (
-                    <img src={p.avatarUrl} className="w-full h-full object-cover" />
+                  {avatarSrc ? (
+                    <img src={avatarSrc} className="w-full h-full object-cover" alt={p.name || 'avatar'} />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-white font-black text-lg">
                       {(p.name || '?')[0]}
@@ -689,7 +707,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           );
         })}
 
-        {/* 仅在打开地点详情（进入 activeView）时，若无玩家才提示，世界地图不报此错 */}
         {localPlayers.length === 0 && activeView && (
           <div
             className="absolute right-4 top-4 pointer-events-none px-3 py-1.5 rounded-lg text-[11px] font-bold
@@ -718,27 +735,30 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
               {localPlayers.length === 0 ? (
                 <div className="text-[11px] text-slate-500 text-center py-3">当前区域暂无其他玩家</div>
               ) : (
-                localPlayers.map((p: any) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setInteractTarget(p)}
-                    className="w-full flex items-center gap-2 p-2 rounded-xl bg-slate-800/70 border border-slate-700 hover:border-sky-500 hover:bg-slate-800 transition-all text-left"
-                  >
-                    <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-600 bg-slate-700 shrink-0">
-                      {p.avatarUrl ? (
-                        <img src={p.avatarUrl} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-white text-xs font-black">
-                          {(p.name || '?')[0]}
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-black text-white truncate">{p.name}</div>
-                      <div className="text-[10px] text-slate-400 truncate">{p.job || p.role || '自由人'}</div>
-                    </div>
-                  </button>
-                ))
+                localPlayers.map((p: any) => {
+                  const avatarSrc = resolveAvatarSrc(p.avatarUrl, p.avatarUpdatedAt);
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setInteractTarget(p)}
+                      className="w-full flex items-center gap-2 p-2 rounded-xl bg-slate-800/70 border border-slate-700 hover:border-sky-500 hover:bg-slate-800 transition-all text-left"
+                    >
+                      <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-600 bg-slate-700 shrink-0">
+                        {avatarSrc ? (
+                          <img src={avatarSrc} className="w-full h-full object-cover" alt={p.name || 'avatar'} />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white text-xs font-black">
+                            {(p.name || '?')[0]}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-black text-white truncate">{p.name}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{p.job || p.role || '自由人'}</div>
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
           )}
@@ -785,7 +805,6 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
           </div>
         )}
       </AnimatePresence>
-
 
       {/* 地点详情弹窗 */}
       <AnimatePresence>
