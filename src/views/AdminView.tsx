@@ -158,6 +158,25 @@ export function AdminView() {
   // ---------------- 技能筛选 ----------------
   const [skillFactionFilter, setSkillFactionFilter] = useState('ALL');
 
+  const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null);
+
+const handleDeleteArchive = async (arc: RPArchive) => {
+  if (!confirm(`确定删除存档《${arc.title}》吗？此操作不可恢复。`)) return;
+  try {
+    setDeletingArchiveId(arc.id);
+    const data = await authedFetch(`/api/admin/rp_archives/${encodeURIComponent(arc.id)}`, {
+      method: 'DELETE'
+    });
+    setArchives(prev => prev.filter(x => x.id !== arc.id));
+    showOk(data.message || `已删除存档 ${arc.id}`);
+  } catch (e: any) {
+    alert(e.message || '删除失败');
+  } finally {
+    setDeletingArchiveId(null);
+  }
+};
+
+
   // ---------------- 新增物品/技能/公告 ----------------
   const [newItem, setNewItem] = useState({
     name: '',
@@ -632,7 +651,7 @@ export function AdminView() {
             管理员身份确认
           </h2>
           <p className="text-sm text-slate-500 mb-6">
-            第二步：输入管理员名字（需在白名单内，默认固定管理员：{FIXED_ADMIN_NAME}）
+            第二步：输入管理员名字
           </p>
 
           <form onSubmit={submitAdminName} className="space-y-3">
@@ -859,7 +878,17 @@ export function AdminView() {
                   {filteredArchives.map(arc => (
                     <div key={arc.id} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                       <div className="bg-slate-50 p-5 border-b border-slate-100">
-                        <h3 className="text-lg font-black text-slate-900 mb-2">{arc.title}</h3>
+                        <div className="flex items-start justify-between gap-3 mb-2">
+  <h3 className="text-lg font-black text-slate-900">{arc.title}</h3>
+  <button
+    onClick={() => handleDeleteArchive(arc)}
+    disabled={deletingArchiveId === arc.id}
+    className="text-xs px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:opacity-60"
+  >
+    {deletingArchiveId === arc.id ? '删除中...' : '删除存档'}
+  </button>
+</div>
+
                         <div className="flex flex-wrap gap-2 text-xs font-bold">
                           <span className="px-2 py-1 bg-sky-100 text-sky-700 rounded-md flex items-center gap-1"><MapPin size={12} /> {arc.locationName || '未知'}</span>
                           <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-md flex items-center gap-1"><Users size={12} /> {arc.participantNames}</span>
