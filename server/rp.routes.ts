@@ -12,7 +12,6 @@ type RPMessageRow = {
   createdAt: string;
 };
 
-
 type MemberRow = {
   sessionId: string;
   userId: number;
@@ -53,21 +52,48 @@ function mapSessionShape(session: SessionRow, members: MemberRow[]) {
   };
 }
 
+function getBearerToken(req: any) {
+  const h = (req.headers?.authorization || '').trim();
+  if (!h.startsWith('Bearer ')) return '';
+  return h.slice(7).trim();
+}
+
 export function createRpRouter(db: Database.Database) {
   const router = express.Router();
+
+  // 管理员鉴权（用于后台档案读取/删除）
+  const requireAdminAuth = (req: any, res: express.Response, next: express.NextFunction) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ success: false, message: '缺少管理员令牌' });
+      }
+
+      const s = db
+        .prepare(
+          `SELECT userId, userName, role, revokedAt
+           FROM user_sessions
+           WHERE token = ?
+           LIMIT 1`
+        )
+        .get(token) as any;
+
+      if (!s || s.revokedAt || s.role !== 'admin') {
+        return res.status(401).json({ success: false, message: '管理员会话失效' });
+      }
+
+      db.prepare(`UPDATE user_sessions SET lastSeenAt = CURRENT_TIMESTAMP WHERE token = ?`).run(token);
+      req.admin = { userId: Number(s.userId), name: s.userName, token };
+      next();
+    } catch (e: any) {
+      return res.status(500).json({ success: false, message: e.message || '鉴权失败' });
+    }
+  };
 
   // 1) 建立/续用会话（前端先开窗，这里异步 upsert）
   router.post('/rp/session/upsert', (req, res) => {
     try {
-      const {
-        sessionId,
-        userAId,
-        userAName,
-        userBId,
-        userBName,
-        locationId,
-        locationName
-      } = req.body || {};
+      const { sessionId, userAId, userAName, userBId, userBName, locationId, locationName } = req.body || {};
 
       const aId = toSafeUserId(userAId);
       const bId = toSafeUserId(userBId);
@@ -177,15 +203,14 @@ export function createRpRouter(db: Database.Database) {
       `).all(sessionId) as MemberRow[];
 
       const messages = db.prepare(`
-  SELECT
-    m.id, m.sessionId, m.senderId, m.senderName, m.content, m.type, m.createdAt,
-    u.avatarUrl as senderAvatar
-  FROM active_rp_messages m
-  LEFT JOIN users u ON u.id = m.senderId
-  WHERE m.sessionId = ?
-  ORDER BY m.id ASC
-`).all(sessionId) as RPMessageRow[];
-
+        SELECT
+          m.id, m.sessionId, m.senderId, m.senderName, m.content, m.type, m.createdAt,
+          u.avatarUrl as senderAvatar
+        FROM active_rp_messages m
+        LEFT JOIN users u ON u.id = m.senderId
+        WHERE m.sessionId = ?
+        ORDER BY m.id ASC
+      `).all(sessionId) as RPMessageRow[];
 
       return res.json({
         success: true,
@@ -327,8 +352,8 @@ export function createRpRouter(db: Database.Database) {
             createdAt: string;
           }>;
 
-          const participantIds = JSON.stringify(members.map(m => m.userId));
-          const participantNames = members.map(m => m.userName).join(', ');
+          const participantIds = JSON.stringify(members.map((m) => m.userId));
+          const participantNames = members.map((m) => m.userName).join(', ');
           // 用稳定 ID 防止重复归档
           const archiveId = `ARC-${sessionId}`;
 
@@ -354,14 +379,7 @@ export function createRpRouter(db: Database.Database) {
             `);
 
             msgs.forEach((m) => {
-              ins.run(
-                archiveId,
-                m.senderId ?? 0,
-                m.senderName || '未知',
-                m.content || '',
-                m.type || 'text',
-                m.createdAt || now()
-              );
+              ins.run(archiveId, m.senderId ?? 0, m.senderName || '未知', m.content || '', m.type || 'text', m.createdAt || now());
             });
           }
         }
@@ -376,8 +394,8 @@ export function createRpRouter(db: Database.Database) {
     }
   });
 
-  // 6) 后台档案读取
-  router.get('/admin/rp_archives', (_req, res) => {
+  // 6) 后台档案读取（仅管理员）
+  router.get('/admin/rp_archives', requireAdminAuth, (_req, res) => {
     try {
       const archives = db.prepare(`
         SELECT * FROM rp_archives
@@ -395,6 +413,31 @@ export function createRpRouter(db: Database.Database) {
       return res.json({ success: true, archives });
     } catch (e: any) {
       return res.status(500).json({ success: false, message: e.message || '读取归档失败' });
+    }
+  });
+
+  // 7) 后台删除单条对戏存档（仅管理员）
+  router.delete('/admin/rp_archives/:archiveId', requireAdminAuth, (req, res) => {
+    try {
+      const archiveId = decodeURIComponent(String(req.params.archiveId || '')).trim();
+      if (!archiveId) {
+        return res.status(400).json({ success: false, message: 'archiveId 必填' });
+      }
+
+      const tx = db.transaction((id: string) => {
+        db.prepare(`DELETE FROM rp_archive_messages WHERE archiveId = ?`).run(id);
+        const ret = db.prepare(`DELETE FROM rp_archives WHERE id = ?`).run(id);
+        return Number(ret.changes || 0);
+      });
+
+      const changes = tx(archiveId);
+      if (changes <= 0) {
+        return res.status(404).json({ success: false, message: '存档不存在或已删除' });
+      }
+
+      return res.json({ success: true, message: `存档 ${archiveId} 已删除` });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, message: e.message || '删除失败' });
     }
   });
 
