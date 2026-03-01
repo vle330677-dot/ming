@@ -276,9 +276,11 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
           <X size={20} />
         </button>
 
-        <div className="w-48 h-64 bg-slate-900 rounded-2xl border-4 border-slate-700 overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto flex items-center justify-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+          {/* ================= 🚀 修复点 ================= */}
+          {/* 这里将 object-cover 改为了 object-contain，这样图片将按原比例完整显示而不会被裁剪 */}
+          <div className="w-48 h-64 bg-slate-900 rounded-2xl border-4 border-slate-700 overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto flex items-center justify-center">
             {targetUser.avatarUrl ? (
-              {/* 将 object-cover 改为 object-contain，这样能完整显示玩家导入的原尺寸比例图片，不会被裁切 */}
               <img src={targetUser.avatarUrl} className="w-full h-full object-contain" alt="avatar" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-6xl text-slate-600 font-black">
