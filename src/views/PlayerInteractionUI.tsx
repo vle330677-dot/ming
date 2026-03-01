@@ -36,29 +36,27 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
       .catch(() => {});
   }, [currentUser.id, targetUser.id]);
 
-  // 头像地址解析（兼容 avatarUrl/avatar/imageUrl + 失败兜底）
-  const resolveAvatarSrc = (u: any) => {
-    const raw = u?.avatarUrl ?? u?.avatar ?? u?.imageUrl ?? '';
-    if (!raw || typeof raw !== 'string') return '';
-    const s = raw.trim();
-    if (!s) return '';
+  // 放在组件内（PlayerInteractionUI 函数里）
+const resolveAvatarSrc = (u: any) => {
+  const raw = u?.avatarUrl ?? u?.avatar ?? u?.imageUrl ?? '';
+  if (!raw || typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (!s) return '';
 
-    // 合法可访问地址：data/base64、http(s)、站内绝对路径
-    if (/^data:image\//.test(s) || /^https?:\/\//.test(s) || s.startsWith('/')) return s;
+  // 合法可访问地址：data/base64、http(s)、站内绝对路径
+  if (/^data:image\//.test(s) || /^https?:\/\//.test(s) || s.startsWith('/')) return s;
 
-    // 明显是本地盘符路径（浏览器不可访问）直接判空，交给首字母兜底
-    if (/^[a-zA-Z]:\\/.test(s)) return '';
+  // 兜底：相对路径转站内路径
+  return `/${s.replace(/^\.?\//, '')}`;
+};
 
-    // 兜底：相对路径转站内路径
-    return `/${s.replace(/^\.?\//, '')}`;
-  };
+const targetAvatarSrc = useMemo(() => resolveAvatarSrc(targetUser), [targetUser]);
+const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 
-  const targetAvatarSrc = useMemo(() => resolveAvatarSrc(targetUser), [targetUser]);
-  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+useEffect(() => {
+  setAvatarLoadFailed(false);
+}, [targetAvatarSrc, targetUser?.id]);
 
-  useEffect(() => {
-    setAvatarLoadFailed(false);
-  }, [targetAvatarSrc, targetUser?.id]);
 
   // ESC 关闭（可控，不依赖点背景）
   useEffect(() => {
@@ -301,17 +299,14 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
         </button>
 
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+          {/* ================= 🚀 修复点 ================= */}
+          {/* 这里将 object-cover 改为了 object-contain，这样图片将按原比例完整显示而不会被裁剪 */}
           <div className="w-48 h-64 bg-slate-900 rounded-2xl border-4 border-slate-700 overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto flex items-center justify-center">
-            {targetAvatarSrc && !avatarLoadFailed ? (
-              <img
-                src={targetAvatarSrc}
-                className="w-full h-full object-contain"
-                alt={`${targetUser.name} avatar`}
-                onError={() => setAvatarLoadFailed(true)}
-              />
+            {targetUser.avatarUrl ? (
+              <img src={targetUser.avatarUrl} className="w-full h-full object-contain" alt="avatar" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-6xl text-slate-600 font-black">
-                {(targetUser?.name || '?')[0]}
+                {targetUser.name[0]}
               </div>
             )}
           </div>
@@ -334,4 +329,144 @@ export function PlayerInteractionUI({ currentUser, targetUser, onClose, onStartR
           />
           <ActionButton
             onClick={() => handleAction('combat')}
-            icon={<Swords
+            icon={<Swords />}
+            label="发起战斗"
+            cls="top-12 left-12"
+            color="bg-rose-600 hover:bg-rose-500"
+            disabled={disableAll}
+          />
+          <ActionButton
+            onClick={() => showToast('已发送组队/纠缠请求')}
+            icon={<Users />}
+            label="组队纠缠"
+            cls="top-12 right-12"
+            color="bg-indigo-600 hover:bg-indigo-500"
+            disabled={disableAll}
+          />
+          <ActionButton
+            onClick={() => handleAction('steal')}
+            icon={<HandMetal />}
+            label="暗中偷窃"
+            cls="top-1/2 left-0 -translate-y-1/2"
+            color="bg-slate-700 hover:bg-slate-600"
+            disabled={disableAll}
+          />
+          <ActionButton
+            onClick={() => setShowNotes(true)}
+            icon={<BookOpen />}
+            label="小本本"
+            cls="top-1/2 right-0 -translate-y-1/2"
+            color="bg-amber-600 hover:bg-amber-500"
+            disabled={disableAll}
+          />
+          <ActionButton
+            onClick={() => showToast('交易系统开发中')}
+            icon={<Coins />}
+            label="发起交易"
+            cls="bottom-12 left-12"
+            color="bg-emerald-600 hover:bg-emerald-500"
+            disabled={disableAll}
+          />
+          <ActionButton
+            onClick={() => showToast('举报已提交至塔区议会')}
+            icon={<ShieldAlert />}
+            label="举报违规"
+            cls="bottom-12 right-12"
+            color="bg-red-800 hover:bg-red-700"
+            disabled={disableAll}
+          />
+          {currentUser.role === '鬼魂' && (
+            <ActionButton
+              onClick={() => handleAction('prank')}
+              icon={<Ghost />}
+              label="恶作剧"
+              cls="bottom-0 left-1/2 -translate-x-1/2"
+              color="bg-violet-600 hover:bg-violet-500"
+              disabled={disableAll}
+            />
+          )}
+          {currentUser.role === '向导' && targetUser.role === '哨兵' && (
+            <ActionButton
+              onClick={() => handleAction('soothe')}
+              icon={<HeartHandshake />}
+              label="精神抚慰"
+              cls="bottom-0 left-1/2 -translate-x-1/2"
+              color="bg-emerald-500 hover:bg-emerald-400"
+              disabled={disableAll}
+            />
+          )}
+          {currentUser.role === '哨兵' && (
+            <ActionButton
+              onClick={() => handleAction('probe')}
+              icon={<Eye />}
+              label="精神探查"
+              cls="bottom-0 left-1/2 -translate-x-1/2"
+              color="bg-blue-600 hover:bg-blue-500"
+              disabled={disableAll}
+            />
+          )}
+        </div>
+
+        <AnimatePresence>
+          {showNotes && (
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="absolute bottom-4 z-50 bg-slate-900 border border-slate-700 p-4 rounded-2xl w-80 shadow-2xl pointer-events-auto"
+            >
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold text-slate-300">关于 {targetUser.name} 的情报笔记</span>
+                <button onClick={() => setShowNotes(false)}>
+                  <X size={14} />
+                </button>
+              </div>
+              <textarea
+                value={noteContent}
+                onChange={(e) => setNoteContent(e.target.value)}
+                placeholder="记录对方的派系、能力、性格等..."
+                className="w-full h-32 bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 outline-none focus:border-amber-500/50 resize-none mb-3"
+              />
+              <button
+                onClick={saveNote}
+                className="w-full py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-500"
+              >
+                保存记录
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </div>
+  );
+}
+
+function ActionButton({
+  icon,
+  label,
+  onClick,
+  cls,
+  color,
+  disabled = false
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  cls: string;
+  color: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={`absolute pointer-events-auto group ${cls}`}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`w-14 h-14 rounded-full text-white flex items-center justify-center transition-all duration-300 hover:scale-110 shadow-lg border-2 border-slate-900 ${color} disabled:opacity-50 disabled:cursor-not-allowed`}
+      >
+        {icon}
+      </button>
+      <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2 py-1 bg-black/80 backdrop-blur rounded text-[10px] font-bold text-white opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none transition-opacity">
+        {label}
+      </div>
+    </div>
+  );
+}
