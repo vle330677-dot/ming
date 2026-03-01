@@ -7,6 +7,7 @@ import { AgeCheckView } from './views/AgeCheckView';
 import { ExtractorView } from './views/ExtractorView';
 import { PendingView } from './views/PendingView';
 import { GameView } from './views/GameView';
+import { TowerOfLifeView } from './views/TowerOfLifeView';
 import { AdminView } from './views/AdminView';
 import { User } from './types';
 import { clearUserSession, clearAdminSession } from './utils/http';
@@ -19,6 +20,7 @@ export type ViewState =
   | 'EXTRACTOR'
   | 'PENDING'
   | 'GAME'
+  | 'TOWER_OF_LIFE'
   | 'ADMIN';
 
 type ToastType = 'info' | 'success' | 'warn';
@@ -99,7 +101,11 @@ export default function App() {
           const data = await res.json();
           if (data.success && data.user.status === 'approved') {
             setUser(data.user);
-            setCurrentView('GAME');
+
+            // 标记“刚审核通过的新用户”，用于命之塔首次欢迎弹窗触发
+            sessionStorage.setItem(`tower_newcomer_welcome_trigger_${data.user.id}`, '1');
+
+            setCurrentView('TOWER_OF_LIFE');
             showToast('身份审核通过，欢迎来到哨向世界！', 'success');
           }
         } catch (error) {
@@ -110,9 +116,9 @@ export default function App() {
     }
   }, [userName, currentView]);
 
-  // GAME 内定时同步用户信息
+  // GAME / TOWER_OF_LIFE 内定时同步用户信息
   useEffect(() => {
-    if (user && currentView === 'GAME') {
+    if (user && (currentView === 'GAME' || currentView === 'TOWER_OF_LIFE')) {
       const timer = setInterval(async () => {
         try {
           const res = await fetch(`/api/users/${encodeURIComponent((user as any).name)}`);
@@ -125,7 +131,8 @@ export default function App() {
       return () => clearInterval(timer);
     }
   }, [user, currentView]);
-    const fetchGlobalData = useCallback(async () => {
+
+  const fetchGlobalData = useCallback(async () => {
     if (!user?.name) return;
     try {
       const res = await fetch(`/api/users/${encodeURIComponent(user.name)}`);
@@ -143,7 +150,6 @@ export default function App() {
     setCurrentView('LOGIN');
     showToast('已退出登录', 'info');
   };
-
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 font-sans relative overflow-hidden">
@@ -189,6 +195,15 @@ export default function App() {
       )}
 
       {currentView === 'PENDING' && <PendingView />}
+
+      {currentView === 'TOWER_OF_LIFE' && user && (
+        <TowerOfLifeView
+          user={user}
+          onExit={() => setCurrentView('GAME')}
+          showToast={(msg) => showToast(msg)}
+          fetchGlobalData={fetchGlobalData}
+        />
+      )}
 
       {currentView === 'GAME' && user && (
         <GameView
