@@ -6,7 +6,8 @@ type RPMessageRow = {
   sessionId: string;
   senderId: number | null;
   senderName: string;
-  senderAvatar?: string | null; // 新增
+  senderAvatar?: string | null;
+  senderAvatarUpdatedAt?: string | null; // ✅ 新增：用于前端缓存破坏
   content: string;
   type: 'user' | 'system' | 'text';
   createdAt: string;
@@ -204,8 +205,15 @@ export function createRpRouter(db: Database.Database) {
 
       const messages = db.prepare(`
         SELECT
-          m.id, m.sessionId, m.senderId, m.senderName, m.content, m.type, m.createdAt,
-          u.avatarUrl as senderAvatar
+          m.id,
+          m.sessionId,
+          m.senderId,
+          m.senderName,
+          m.content,
+          m.type,
+          m.createdAt,
+          u.avatarUrl as senderAvatar,
+          u.avatarUpdatedAt as senderAvatarUpdatedAt
         FROM active_rp_messages m
         LEFT JOIN users u ON u.id = m.senderId
         WHERE m.sessionId = ?
