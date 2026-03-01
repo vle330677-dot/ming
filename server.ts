@@ -597,6 +597,8 @@ const ensureCompatColumns = () => {
   addColumn('custom_game_player_stats', 'updated_at', 'DATETIME');
   addColumn('users', 'homeLocation', 'TEXT'); // 家园所在地
 
+  addColumn('users', 'avatarUpdatedAt', 'TEXT');
+
 };
 
 ensureCompatColumns();
@@ -1504,13 +1506,15 @@ app.post('/api/explore/wild-encounter', (req, res) => {
       let players: any[] = [];
       if (Number.isFinite(excludeId)) {
         players = db.prepare(`
-          SELECT id, name, avatarUrl, role, currentLocation, status
+          SELECT id, name, avatarUrl, avatarUpdatedAt, role, currentLocation, status
+
           FROM users WHERE currentLocation = ? AND status IN ('approved', 'ghost') AND id <> ?
           ORDER BY id ASC
         `).all(locationId, excludeId);
       } else {
         players = db.prepare(`
-          SELECT id, name, avatarUrl, role, currentLocation, status
+          SELECT id, name, avatarUrl, avatarUpdatedAt, role, currentLocation, status
+
           FROM users WHERE currentLocation = ? AND status IN ('approved', 'ghost')
           ORDER BY id ASC
         `).all(locationId);
@@ -1527,7 +1531,8 @@ app.post('/api/explore/wild-encounter', (req, res) => {
     let players: any[] = [];
     if (locationId) {
       players = db.prepare(`
-        SELECT id as userId, name as userName, avatarUrl, currentLocation
+        SELECT id as userId, name as userName, avatarUrl, avatarUpdatedAt, currentLocation
+
         FROM users
         WHERE status IN ('approved', 'ghost') AND currentLocation = ?
         ORDER BY id DESC
@@ -1535,7 +1540,8 @@ app.post('/api/explore/wild-encounter', (req, res) => {
       `).all(locationId);
     } else {
       players = db.prepare(`
-        SELECT id as userId, name as userName, avatarUrl, currentLocation
+        SELECT id as userId, name as userName, avatarUrl, avatarUpdatedAt, currentLocation
+
         FROM users
         WHERE status IN ('approved', 'ghost')
         ORDER BY id DESC
@@ -1850,9 +1856,24 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
   });
 
   app.put('/api/users/:id/avatar', (req, res) => {
-    db.prepare('UPDATE users SET avatarUrl = ? WHERE id = ?').run(req.body.avatarUrl, req.params.id);
-    res.json({ success: true });
-  });
+  const userId = Number(req.params.id);
+  const avatarUrl = String(req.body?.avatarUrl || '').trim();
+
+  db.prepare(`
+    UPDATE users
+    SET avatarUrl = ?, avatarUpdatedAt = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(avatarUrl || null, userId);
+
+  const row = db.prepare(`
+    SELECT id, avatarUrl, avatarUpdatedAt
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+
+  res.json({ success: true, user: row });
+});
+
 
   app.get('/api/users/:id/inventory', (req, res) => {
     const items = db.prepare(`
