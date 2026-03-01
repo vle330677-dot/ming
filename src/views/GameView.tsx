@@ -99,6 +99,12 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
 
   const [localPlayers, setLocalPlayers] = useState<any[]>([]);
   const [showPlayersPanel, setShowPlayersPanel] = useState(true);
+  const [annQueue, setAnnQueue] = useState<any[]>([]);
+  const [activeAnn, setActiveAnn] = useState<any | null>(null);
+  const [lastSeenAnnId, setLastSeenAnnId] = useState<number>(() => {
+    const k = `ann_last_seen_${user.id}`;
+    return Number(localStorage.getItem(k) || 0);
+  });
 
   const [interactTarget, setInteractTarget] = useState<any>(null);
 
@@ -141,6 +147,48 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     if ((user.hp || 0) <= 0 && user.status === 'approved') setIsDying(true);
     else setIsDying(false);
   }, [user.hp, user.status]);
+    useEffect(() => {
+    let alive = true;
+    
+
+    const pullAnnouncements = async () => {
+      try {
+        const res = await fetch(`/api/announcements?sinceId=${lastSeenAnnId}&limit=20`, {
+          cache: 'no-store'
+        });
+        const data = await res.json();
+        if (!alive || !data?.success) return;
+
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        if (!rows.length) return;
+
+        setAnnQueue((prev) => {
+          const ids = new Set([
+            ...prev.map((x: any) => Number(x.id)),
+            ...(activeAnn ? [Number(activeAnn.id)] : [])
+          ]);
+          const incoming = rows.filter((x: any) => !ids.has(Number(x.id)));
+          return incoming.length ? [...prev, ...incoming] : prev;
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    pullAnnouncements();
+    const t = setInterval(pullAnnouncements, 4000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [lastSeenAnnId, activeAnn]);
+  useEffect(() => {
+    if (!activeAnn && annQueue.length > 0) {
+      setActiveAnn(annQueue[0]);
+      setAnnQueue((q) => q.slice(1));
+    }
+  }, [annQueue, activeAnn]);
+
 
   useEffect(() => {
     if (!isDying || !rescueReqId) return;
@@ -464,6 +512,24 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
     setNewComment('');
     loadComments(tombstoneId);
   };
+const closeAnnouncement = () => {
+  const ids = [
+    Number(activeAnn?.id || 0),
+    ...annQueue.map((x: any) => Number(x?.id || 0))
+  ].filter((n) => n > 0);
+
+  const maxId = ids.length ? Math.max(...ids) : 0;
+  if (maxId > 0) {
+    const k = `ann_last_seen_${user.id}`;
+    localStorage.setItem(k, String(maxId));
+    setLastSeenAnnId((prev) => Math.max(prev, maxId));
+  }
+
+  setAnnQueue([]);   // ✅ 清空剩余队列
+  setActiveAnn(null);
+};
+
+
 
   const deleteComment = async (commentId: number, tombstoneId: number) => {
     await fetch(`/api/graveyard/comments/${commentId}`, {
@@ -1146,6 +1212,38 @@ export function GameView({ user, onLogout, showToast, fetchGlobalData }: Props) 
             currentUser={user}
             onClose={() => setRPWindowOpen(false)}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeAnn && (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 14 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-[1000] w-[92vw] max-w-xl"
+          >
+            <div className="bg-slate-900/95 border border-amber-400/40 rounded-2xl shadow-2xl p-4 backdrop-blur-md">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[11px] text-amber-300 font-black mb-1">全服通报</div>
+                  <h4 className="text-white font-black text-base">
+                    {activeAnn.title || '系统公告'}
+                  </h4>
+                </div>
+                <button
+                  onClick={closeAnnouncement}
+                  className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 text-xs font-bold"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <p className="mt-2 text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
+                {activeAnn.content || ''}
+              </p>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
