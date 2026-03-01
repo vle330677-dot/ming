@@ -1,28 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Button,
-  Card,
-  Empty,
-  Input,
-  Modal,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Typography,
-  message,
-} from 'antd';
-import type { ColumnsType } from 'antd/es/table';
-import {
-  ExclamationCircleOutlined,
-  PlusOutlined,
-  ReloadOutlined,
-  SearchOutlined,
-} from '@ant-design/icons';
-import dayjs from 'dayjs';
-
-const { Text } = Typography;
-const { confirm } = Modal;
 
 type RoomStatus = 'vacant' | 'occupied' | 'reserved' | 'maintenance';
 
@@ -48,25 +24,30 @@ interface TowerRoomViewProps {
   onDeleted?: (roomId: string) => void;
 }
 
-const STATUS_META: Record<RoomStatus, { text: string; color: string }> = {
-  vacant: { text: '空置', color: 'default' },
-  occupied: { text: '已入住', color: 'success' },
-  reserved: { text: '预留', color: 'processing' },
-  maintenance: { text: '维修中', color: 'warning' },
+const STATUS_META: Record<RoomStatus, { text: string; className: string }> = {
+  vacant: { text: '空置', className: 'bg-slate-700 text-slate-100' },
+  occupied: { text: '已入住', className: 'bg-emerald-700 text-emerald-100' },
+  reserved: { text: '预留', className: 'bg-sky-700 text-sky-100' },
+  maintenance: { text: '维修中', className: 'bg-amber-700 text-amber-100' },
 };
 
-const PAGE_SIZE_OPTIONS = ['10', '20', '50', '100'];
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
+function formatTime(v?: string) {
+  if (!v) return '-';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '-';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day} ${hh}:${mm}`;
+}
 
 /**
  * ===== 内置服务层（替代缺失的 @/services/towerRoomService）=====
- * 支持两套路由，避免后端路径差异导致前端直接挂死：
- * 1) GET    /api/tower/rooms?towerId=xxx
- * 2) GET    /api/tower/:towerId/rooms
- * 删除：
- * 1) DELETE /api/tower/rooms/:roomId
- * 2) DELETE /api/tower/room/:roomId
  */
-
 function normalizeRoomsPayload(payload: any): TowerRoom[] {
   const raw = Array.isArray(payload)
     ? payload
@@ -149,6 +130,12 @@ async function removeTowerRoom(roomId: string): Promise<void> {
   throw new Error(lastError);
 }
 
+const btnBase =
+  'px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const btnGhost = `${btnBase} bg-slate-700 text-slate-100 hover:bg-slate-600`;
+const btnPrimary = `${btnBase} bg-sky-600 text-white hover:bg-sky-500`;
+const btnDanger = `${btnBase} bg-rose-700 text-rose-100 hover:bg-rose-600`;
+
 const TowerRoomView: React.FC<TowerRoomViewProps> = ({
   towerId,
   loading: outerLoading = false,
@@ -178,7 +165,7 @@ const TowerRoomView: React.FC<TowerRoomViewProps> = ({
       setRooms(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
-      message.error('房间数据加载失败');
+      alert('房间数据加载失败');
       setRooms([]);
     } finally {
       setListLoading(false);
@@ -218,203 +205,210 @@ const TowerRoomView: React.FC<TowerRoomViewProps> = ({
     setPage(1);
   }, [keyword, statusFilter, typeFilter]);
 
+  const total = filteredRooms.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageData = filteredRooms.slice(pageStart, pageStart + pageSize);
+
   const handleDelete = useCallback(
-    (room: TowerRoom) => {
-      confirm({
-        title: `确认删除房间「${room.code}」吗？`,
-        icon: <ExclamationCircleOutlined />,
-        content: '删除后不可恢复，请谨慎操作。',
-        okText: '确认删除',
-        okType: 'danger',
-        cancelText: '取消',
-        onOk: async () => {
-          try {
-            setDeleteLoadingId(room.id);
-            await removeTowerRoom(room.id);
-            message.success('删除成功');
-            setRooms((prev) => prev.filter((x) => x.id !== room.id));
-            onDeleted?.(room.id);
-          } catch (err) {
-            console.error(err);
-            message.error('删除失败，请稍后重试');
-          } finally {
-            setDeleteLoadingId(null);
-          }
-        },
-      });
+    async (room: TowerRoom) => {
+      const ok = window.confirm(`确认删除房间「${room.code}」吗？\n删除后不可恢复，请谨慎操作。`);
+      if (!ok) return;
+
+      try {
+        setDeleteLoadingId(room.id);
+        await removeTowerRoom(room.id);
+        setRooms((prev) => prev.filter((x) => x.id !== room.id));
+        onDeleted?.(room.id);
+        alert('删除成功');
+      } catch (err) {
+        console.error(err);
+        alert('删除失败，请稍后重试');
+      } finally {
+        setDeleteLoadingId(null);
+      }
     },
     [onDeleted],
   );
 
-  const columns: ColumnsType<TowerRoom> = useMemo(
-    () => [
-      {
-        title: '房号',
-        dataIndex: 'code',
-        key: 'code',
-        width: 120,
-        fixed: 'left',
-        render: (_, r) => (
-          <Button type="link" style={{ padding: 0 }} onClick={() => onViewRoom?.(r)}>
-            {r.code}
-          </Button>
-        ),
-      },
-      {
-        title: '名称',
-        dataIndex: 'name',
-        key: 'name',
-        width: 160,
-        render: (v: string | undefined) => v || '-',
-      },
-      {
-        title: '楼层',
-        dataIndex: 'floor',
-        key: 'floor',
-        width: 90,
-        sorter: (a, b) => a.floor - b.floor,
-      },
-      {
-        title: '类型',
-        dataIndex: 'roomType',
-        key: 'roomType',
-        width: 120,
-        render: (v: string | undefined) => v || '-',
-      },
-      {
-        title: '面积(㎡)',
-        dataIndex: 'area',
-        key: 'area',
-        width: 110,
-        sorter: (a, b) => (a.area || 0) - (b.area || 0),
-        render: (v: number | undefined) => (v ? v.toFixed(2) : '-'),
-      },
-      {
-        title: '状态',
-        dataIndex: 'status',
-        key: 'status',
-        width: 110,
-        render: (status: RoomStatus) => {
-          const meta = STATUS_META[status] || { text: status, color: 'default' };
-          return <Tag color={meta.color}>{meta.text}</Tag>;
-        },
-      },
-      {
-        title: '租户',
-        dataIndex: 'tenantName',
-        key: 'tenantName',
-        width: 180,
-        render: (v: string | undefined) => v || '-',
-      },
-      {
-        title: '更新时间',
-        dataIndex: 'updatedAt',
-        key: 'updatedAt',
-        width: 180,
-        render: (v: string | undefined) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
-      },
-      {
-        title: '操作',
-        key: 'actions',
-        fixed: 'right',
-        width: 170,
-        render: (_, room) => (
-          <Space size={4}>
-            <Button size="small" onClick={() => onViewRoom?.(room)}>
-              查看
-            </Button>
-            <Button size="small" onClick={() => onEditRoom?.(room)}>
-              编辑
-            </Button>
-            <Button
-              size="small"
-              danger
-              loading={deleteLoadingId === room.id}
-              onClick={() => handleDelete(room)}
-            >
-              删除
-            </Button>
-          </Space>
-        ),
-      },
-    ],
-    [deleteLoadingId, handleDelete, onEditRoom, onViewRoom],
-  );
-
   return (
-    <Card
-      title="房间列表"
-      extra={
-        <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadData} loading={mergedLoading}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={onCreateRoom}>
+    <div className="rounded-2xl border border-slate-700 bg-slate-900 text-slate-100 shadow-xl p-4">
+      {/* 头部 */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 className="text-base font-black">房间列表</h3>
+        <div className="flex gap-2">
+          <button className={btnGhost} onClick={loadData} disabled={mergedLoading}>
+            {mergedLoading ? '刷新中...' : '刷新'}
+          </button>
+          <button className={btnPrimary} onClick={onCreateRoom}>
             新建房间
-          </Button>
-        </Space>
-      }
-    >
+          </button>
+        </div>
+      </div>
+
       {/* 筛选区 */}
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Input
-          allowClear
-          placeholder="搜索房号/名称/租户/楼层"
-          prefix={<SearchOutlined />}
-          style={{ width: 280 }}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
+          placeholder="搜索房号/名称/租户/楼层"
+          className="w-[280px] max-w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm outline-none focus:border-sky-500"
         />
 
-        <Select<RoomStatus | 'all'>
-          style={{ width: 140 }}
+        <select
           value={statusFilter}
-          onChange={setStatusFilter}
-          options={[
-            { label: '全部状态', value: 'all' },
-            { label: '空置', value: 'vacant' },
-            { label: '已入住', value: 'occupied' },
-            { label: '预留', value: 'reserved' },
-            { label: '维修中', value: 'maintenance' },
-          ]}
-        />
+          onChange={(e) => setStatusFilter(e.target.value as RoomStatus | 'all')}
+          className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm outline-none focus:border-sky-500"
+        >
+          <option value="all">全部状态</option>
+          <option value="vacant">空置</option>
+          <option value="occupied">已入住</option>
+          <option value="reserved">预留</option>
+          <option value="maintenance">维修中</option>
+        </select>
 
-        <Select<string | 'all'>
-          style={{ width: 160 }}
+        <select
           value={typeFilter}
-          onChange={setTypeFilter}
-          options={[
-            { label: '全部类型', value: 'all' },
-            ...roomTypeOptions.map((t) => ({ label: t, value: t })),
-          ]}
-        />
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm outline-none focus:border-sky-500"
+        >
+          <option value="all">全部类型</option>
+          {roomTypeOptions.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
 
-        <Text type="secondary">共 {filteredRooms.length} 条</Text>
-      </Space>
+        <span className="text-xs text-slate-400">共 {filteredRooms.length} 条</span>
+      </div>
 
-      <Table<TowerRoom>
-        rowKey="id"
-        loading={mergedLoading}
-        columns={columns}
-        dataSource={filteredRooms}
-        scroll={{ x: 1200 }}
-        locale={{
-          emptyText: <Empty description="暂无房间数据" />,
-        }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: filteredRooms.length,
-          showSizeChanger: true,
-          pageSizeOptions: PAGE_SIZE_OPTIONS,
-          showTotal: (total) => `共 ${total} 条`,
-          onChange: (p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          },
-        }}
-      />
-    </Card>
+      {/* 表格 */}
+      <div className="overflow-auto rounded-xl border border-slate-700">
+        <table className="min-w-[1100px] w-full text-sm">
+          <thead className="bg-slate-800 text-slate-200">
+            <tr>
+              <th className="px-3 py-2 text-left">房号</th>
+              <th className="px-3 py-2 text-left">名称</th>
+              <th className="px-3 py-2 text-left">楼层</th>
+              <th className="px-3 py-2 text-left">类型</th>
+              <th className="px-3 py-2 text-left">面积(㎡)</th>
+              <th className="px-3 py-2 text-left">状态</th>
+              <th className="px-3 py-2 text-left">租户</th>
+              <th className="px-3 py-2 text-left">更新时间</th>
+              <th className="px-3 py-2 text-left">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mergedLoading ? (
+              <tr>
+                <td className="px-3 py-6 text-center text-slate-400" colSpan={9}>
+                  加载中...
+                </td>
+              </tr>
+            ) : pageData.length === 0 ? (
+              <tr>
+                <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
+                  暂无房间数据
+                </td>
+              </tr>
+            ) : (
+              pageData.map((room) => {
+                const meta = STATUS_META[room.status] || {
+                  text: room.status,
+                  className: 'bg-slate-700 text-slate-100',
+                };
+                return (
+                  <tr key={room.id} className="border-t border-slate-800">
+                    <td className="px-3 py-2">
+                      <button
+                        className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-2"
+                        onClick={() => onViewRoom?.(room)}
+                      >
+                        {room.code}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2">{room.name || '-'}</td>
+                    <td className="px-3 py-2">{room.floor}</td>
+                    <td className="px-3 py-2">{room.roomType || '-'}</td>
+                    <td className="px-3 py-2">{room.area ? room.area.toFixed(2) : '-'}</td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-bold ${meta.className}`}>
+                        {meta.text}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">{room.tenantName || '-'}</td>
+                    <td className="px-3 py-2">{formatTime(room.updatedAt)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex gap-1">
+                        <button className={btnGhost} onClick={() => onViewRoom?.(room)}>
+                          查看
+                        </button>
+                        <button className={btnGhost} onClick={() => onEditRoom?.(room)}>
+                          编辑
+                        </button>
+                        <button
+                          className={btnDanger}
+                          disabled={deleteLoadingId === room.id}
+                          onClick={() => handleDelete(room)}
+                        >
+                          {deleteLoadingId === room.id ? '删除中...' : '删除'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 分页 */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+        <div className="text-slate-400">共 {total} 条</div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-slate-400">每页</label>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              const ps = Number(e.target.value) || 20;
+              setPageSize(ps);
+              setPage(1);
+            }}
+            className="px-2 py-1 rounded bg-slate-950 border border-slate-700"
+          >
+            {PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+
+          <button
+            className={btnGhost}
+            disabled={safePage <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            上一页
+          </button>
+
+          <span className="text-slate-300">
+            第 {safePage} / {pageCount} 页
+          </span>
+
+          <button
+            className={btnGhost}
+            disabled={safePage >= pageCount}
+            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+          >
+            下一页
+          </button>
+        </div>
+      </div>
+    </div>
   );
 };
 
