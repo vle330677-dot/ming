@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import HomeRoomView, { deriveInitialHomeLocation } from './rooms/HomeRoomView';
+import HomeRoomView, { deriveInitialHomeLocation } from './HomeRoomView';
+
 import {
   ArrowLeft, X, Factory,
   ShoppingBag, AlertOctagon,
@@ -597,4 +598,5 @@ function JobCard({ title, sub, qualified, onClick }: any) {
       {!qualified && <span className="text-[9px] text-rose-500 border border-rose-900/50 bg-rose-950/20 px-2 py-1 rounded">条件未达</span>}
     </button>
   );
+
 }
