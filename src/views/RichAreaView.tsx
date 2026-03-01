@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import HomeRoomView, { deriveInitialHomeLocation } from './rooms/HomeRoomView';
+import HomeRoomView, { deriveInitialHomeLocation } from './HomeRoomView';
+
 
 import {
   ArrowLeft, X, Gem,
@@ -580,4 +581,5 @@ function EliteCard({ title, sub, qualified, onClick }: any) {
       {!qualified && <span className="text-[10px] text-red-500 bg-red-50 px-2 py-1 rounded-lg font-bold border border-red-100">等级不够</span>}
     </button>
   );
+
 }
