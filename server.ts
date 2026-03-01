@@ -727,7 +727,6 @@ const logWorldActivity = (userId: number, locationId: string, actionType: string
   `).run(userId, u.name, u.avatarUrl || null, locationId, actionType, actionText);
 };
 
-
 const resolveInitialHome = (age: number, gold: number) => {
   if (age < 16) return 'sanctuary';
   return gold >= 9999 ? 'rich_area' : 'slums';
@@ -749,6 +748,17 @@ const JOB_HOME_MAP: Record<string, string> = {
   '灵异所所长': 'paranormal_office', '搜捕队队长': 'paranormal_office', '搜捕队队员': 'paranormal_office', '灵异所文员': 'paranormal_office',
   '观察者首领': 'observers', '情报搜集员': 'observers', '情报处理员': 'observers'
 };
+
+const ADULT_AGE = 16;
+const DEFAULT_MINOR_AGE = 15;
+
+const normalizeCreateAge = (rawAge: any, isUndiff: boolean) => {
+  const n = Number(rawAge);
+  if (!Number.isFinite(n)) return isUndiff ? DEFAULT_MINOR_AGE : ADULT_AGE;
+  if (isUndiff) return Math.min(n, ADULT_AGE - 1); // 最大15
+  return n;
+};
+
 
 const resolveHomeFromJob = (job?: string | null) => {
   if (!job) return null;
@@ -1710,25 +1720,32 @@ app.get('/api/world/activity/recent', (req, res) => {
     }
   });
 
-  app.put('/api/admin/users/:id', requireAdminAuth,(req, res) => {
-    let { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
-    
-    if (age && age < 16) {
-      faction = '圣所';
-      role = '未分化';
-    }
+  app.put('/api/admin/users/:id', requireAdminAuth, (req, res) => {
+  let { role, age, faction, mentalRank, physicalRank, ability, spiritName, profileText, status, password } = req.body;
 
-    db.prepare(
-      `UPDATE users
-       SET role=?, age=?, faction=?, mentalRank=?, physicalRank=?, ability=?, spiritName=?, profileText=?, status=?, password=?
-       WHERE id=?`
-    ).run(
-      role, age, faction, mentalRank, physicalRank, ability,
-      spiritName, profileText, status || 'approved', password || null, req.params.id
-    );
+  let finalAge = Number(age);
+  if (!Number.isFinite(finalAge)) finalAge = 16;
 
-    res.json({ success: true });
-  });
+  if (finalAge < 16) {
+    finalAge = Math.min(finalAge, 15);
+    role = '未分化';
+    faction = '圣所';
+  }
+
+  const homeLocation = finalAge < 16 ? 'sanctuary' : (req.body.homeLocation || null);
+
+  db.prepare(
+    `UPDATE users
+     SET role=?, age=?, faction=?, mentalRank=?, physicalRank=?, ability=?, spiritName=?, profileText=?, status=?, password=?, homeLocation=?
+     WHERE id=?`
+  ).run(
+    role, finalAge, faction, mentalRank, physicalRank, ability,
+    spiritName, profileText, status || 'approved', password || null, homeLocation, req.params.id
+  );
+
+  res.json({ success: true });
+});
+
 
   app.put('/api/users/:id/settings', requireUserAuth, async (req: any, res) => {
   const { roomBgImage, roomDescription, allowVisit, roomPassword } = req.body;
@@ -1799,26 +1816,6 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
       res.json({ success: true });
     } catch {
       res.json({ success: false, message: '初始化失败' });
-    }
-  });
-
-  app.post('/api/users', (req, res) => {
-    let { name, role, age, mentalRank, physicalRank, gold, ability, spiritName, spiritType } = req.body;
-    
-    if (age && age < 16) {
-      role = '未分化';
-    }
-
-    try {
-      db.prepare(`
-        UPDATE users
-        SET role=?, age=?, mentalRank=?, physicalRank=?, gold=?, ability=?, spiritName=?, spiritType=?, status='pending'
-        WHERE name=?
-      `).run(role, age || 18, mentalRank, physicalRank, gold, ability, spiritName, spiritType, name);
-
-      res.json({ success: true });
-    } catch (e: any) {
-      res.status(500).json({ success: false, message: e.message });
     }
   });
 
@@ -1959,10 +1956,12 @@ app.post('/api/rooms/:ownerId/verify-password', async (req, res) => {
   });
 
   app.post('/api/tower/interact-spirit', (req, res) => {
-    const roleRow = db.prepare('SELECT role FROM users WHERE id=?').get(userId) as any;
-if (!roleRow || !['哨兵', '向导'].includes(String(roleRow.role || ''))) {
-  return res.status(403).json({ success: false, message: '仅哨兵/向导可进行精神体交互' });
-}
+  const { userId, intimacyGain, imageUrl, name } = req.body;
+
+  const roleRow = db.prepare('SELECT role FROM users WHERE id=?').get(userId) as any;
+  if (!roleRow || !['哨兵', '向导'].includes(String(roleRow.role || ''))) {
+    return res.status(403).json({ success: false, message: '仅哨兵/向导可进行精神体交互' });
+  }
 
     const { userId, intimacyGain, imageUrl, name } = req.body;
 
